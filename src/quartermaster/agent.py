@@ -76,6 +76,7 @@ class Profile:
     system_append: str = ""
     max_turns: int = 30
     enabled: bool = True
+    output_schema: dict | None = None
 
 
 def owner_profile(settings: Settings) -> Profile:
@@ -110,6 +111,25 @@ def public_profile(settings: Settings) -> Profile:
         ),
         max_turns=8,
         enabled=False,
+    )
+
+
+def parser_profile(settings: Settings, schema: dict) -> Profile:
+    """A profile that can only read a request and emit JSON.
+
+    No tools, no vault, no session. Used to turn an English moderation request
+    into a structured plan: the model decides what was *asked for*, and code
+    decides what is permitted and what actually runs. Keeping the tool list
+    empty is what makes an injected instruction harmless - the worst it can
+    produce is a plan a human then rejects.
+    """
+    return Profile(
+        name="parser",
+        cwd=settings.public_workspace,
+        allowed_tools=[],
+        share_session=False,
+        max_turns=1,
+        output_schema=schema,
     )
 
 
@@ -151,6 +171,11 @@ def _options(profile: Profile, cli_path: str | None = None) -> ClaudeAgentOption
         permission_mode="acceptEdits",
         continue_conversation=profile.share_session,
         max_turns=profile.max_turns,
+        **(
+            {"output_format": {"type": "json_schema", "schema": profile.output_schema}}
+            if profile.output_schema
+            else {}
+        ),
     )
 
 

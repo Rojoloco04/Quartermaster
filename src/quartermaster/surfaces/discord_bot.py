@@ -21,6 +21,7 @@ import logging
 import discord
 
 from .. import agent
+from . import moderation
 from ..config import Settings, load_settings
 
 log = logging.getLogger(__name__)
@@ -81,16 +82,21 @@ def _repair_code_fences(parts: list[str]) -> list[str]:
 
 
 class Quartermaster(discord.Client):
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, *, with_members: bool = True):
         intents = discord.Intents.default()
         # Privileged, and must be enabled in the Developer Portal too. Without
         # it every message arrives with empty content and the bot silently
         # ignores everything - the most common way this setup fails.
         intents.message_content = True
         intents.dm_messages = True
+        # Also privileged. Needed to resolve "ban dave" to a member and to read
+        # role positions for the hierarchy check. Optional: without it the bot
+        # still runs and the vault assistant works, moderation just turns off.
+        intents.members = with_members
 
         super().__init__(intents=intents)
         self.settings = settings
+        self.moderation_enabled = with_members
         self.owner = agent.owner_profile(settings)
         self.public = agent.public_profile(settings)
         self._busy = asyncio.Lock()
@@ -102,24 +108,34 @@ class Quartermaster(discord.Client):
         print(f"  transcripts: {agent.transcript_dir(self.settings.vault)}")
         print(f"  owner id:    {self.settings.discord_owner_id}")
         print(f"  public mode: {'on' if self.public.enabled else 'off'}")
+        if self.moderation_enabled:
+            print("  moderation:  on (gated by each invoker's own Discord permissions)")
+        else:
+            print("  moderation:  OFF - SERVER MEMBERS INTENT is not enabled")
         print("\nDM the bot to talk to it. Ctrl-C to stop.\n")
 
-    def _profile_for(self, message: discord.Message) -> agent.Profile | None:
-        """Decide who is talking, and therefore what may be reached.
+    def _route(self, message: discord.Message) -> str | None:
+        """Decide which surface handles this message, if any.
 
         Returning None means stay silent. Silence is the default for everything
         that is not an explicit, recognised case.
         """
         is_owner = message.author.id == self.settings.discord_owner_id
         is_dm = isinstance(message.channel, discord.DMChannel)
+        mentioned = self.user is not None and self.user in message.mentions
 
+        # Vault access is DM-only. In a shared channel the replies would be
+        # readable by everyone present, so even the owner does not get it there.
         if is_owner and is_dm:
-            return self.owner
+            return "owner"
 
-        # The owner's messages in a shared channel are NOT given vault access:
-        # anyone in that channel would then read the replies.
-        if self.public.enabled and self.user is not None and self.user in message.mentions:
-            return self.public
+        # Moderation in a guild channel. Anyone may ask; whether anything
+        # happens is decided by their real Discord permissions, checked in code.
+        if mentioned and message.guild is not None and self.moderation_enabled:
+            return "moderation"
+
+        if mentioned and self.public.enabled:
+            return "public"
 
         return None
 
@@ -127,8 +143,8 @@ class Quartermaster(discord.Client):
         if self.user is not None and message.author.id == self.user.id:
             return
 
-        profile = self._profile_for(message)
-        if profile is None:
+        route = self._route(message)
+        if route is None:
             return
 
         prompt = message.content
@@ -141,6 +157,15 @@ class Quartermaster(discord.Client):
 
         if not prompt:
             return
+
+        if route == "moderation":
+            # Not under the busy lock: moderation waits on a human pressing a
+            # button, and holding the lock for two minutes would block the
+            # owner's DM thread behind it.
+            await moderation.handle(self.settings, message, self.user, prompt)
+            return
+
+        profile = self.owner if route == "owner" else self.public
 
         # One turn at a time. Two concurrent turns would both resume the same
         # session and interleave, corrupting the shared thread.
@@ -179,20 +204,35 @@ def run(settings: Settings | None = None) -> int:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
     )
 
-    client = Quartermaster(settings)
-    try:
-        client.run(settings.discord_bot_token or "", log_handler=None)
-    except discord.PrivilegedIntentsRequired:
-        print(
-            "\nDiscord refused the connection: MESSAGE CONTENT INTENT is off.\n"
-            "Enable it at discord.com/developers/applications -> your app -> Bot\n"
-            "-> Privileged Gateway Intents -> Message Content Intent -> Save Changes."
-        )
-        return 1
-    except discord.LoginFailure:
-        print("\nDiscord refused the token. Check DISCORD_BOT_TOKEN in .env.")
-        return 1
-    except KeyboardInterrupt:
-        pass
+    # Try with moderation, then without. A feature nobody has switched on in the
+    # portal yet must not take down the assistant that gets used every day.
+    for with_members in (True, False):
+        client = Quartermaster(settings, with_members=with_members)
+        try:
+            client.run(settings.discord_bot_token or "", log_handler=None)
+            return 0
+        except discord.PrivilegedIntentsRequired:
+            if with_members:
+                print(
+                    "\nSERVER MEMBERS INTENT is off, so moderation is unavailable.\n"
+                    "Starting without it - DMs and the vault assistant still work.\n\n"
+                    "To enable moderation: discord.com/developers/applications ->\n"
+                    "your app -> Bot -> Privileged Gateway Intents -> Server Members\n"
+                    "Intent -> Save Changes, then restart.\n"
+                )
+                continue
 
-    return 0
+            print(
+                "\nDiscord refused the connection: MESSAGE CONTENT INTENT is off.\n"
+                "Enable it at discord.com/developers/applications -> your app -> Bot\n"
+                "-> Privileged Gateway Intents -> Message Content Intent -> Save Changes.\n"
+                "Without it your messages arrive empty and the bot ignores everything."
+            )
+            return 1
+        except discord.LoginFailure:
+            print("\nDiscord refused the token. Check DISCORD_BOT_TOKEN in .env.")
+            return 1
+        except KeyboardInterrupt:
+            return 0
+
+    return 1
