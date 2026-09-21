@@ -1,0 +1,41 @@
+# Preferences. Secrets live in the repo's .env, not here.
+# Anything omitted falls back to the defaults in quartermaster/config.py.
+
+[home]
+label = "St. Louis, MO"
+geopoint = "9yzg"        # Ticketmaster takes a geohash, not raw lat/long
+latitude = 38.6270
+longitude = -90.1994
+
+# Each band is queried separately. That sets the bar for how interesting an
+# event must be to be worth the distance, and keeps every query under
+# Ticketmaster's 1000-result deep-paging cap.
+[[events.bands]]
+name = "local"
+min_miles = 0
+max_miles = 60
+bar = "low"              # a weeknight — STL metro
+
+[[events.bands]]
+name = "day_trip"
+min_miles = 60
+max_miles = 250
+bar = "medium"           # KC, Indy, Memphis, Louisville, Nashville
+
+[[events.bands]]
+name = "weekend"
+min_miles = 250
+max_miles = 500
+bar = "high"             # Chicago, Cincinnati, Milwaukee, Tulsa
+
+[notion]
+stale_after_days = 90    # must ALSO look unfinished to count as stale
+
+[digest]
+weekday = "sunday"
+hour = 18
+calendar_days_ahead = 7
+
+[quiet_hours]
+start = 22
+end = 8

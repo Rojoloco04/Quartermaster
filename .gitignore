@@ -1,0 +1,21 @@
+# Secrets — never commit
+.env
+*.token.json
+credentials.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# The vault lives elsewhere and is its own repo.
+# If someone symlinks or clones it in here, don't track it.
+/vault/
+
+# Local state
+*.db-journal
+*.db-wal
+*.db-shm
