@@ -139,6 +139,7 @@ async def handle(
     # --- Preview -----------------------------------------------------------
 
     matched: list[discord.Message] = []
+    replied_to: discord.Message | None = None
     if not plan.is_member_action:
         replied_to = await _replied_message(message)
         if replied_to is not None:
@@ -149,7 +150,7 @@ async def handle(
             # twenty".
             matched = [replied_to]
         else:
-            matcher = discord_ops.build_matcher(plan)
+            matcher = discord_ops.build_matcher(plan, bot_user_id=bot_user.id)
             try:
                 async for msg in channel.history(limit=max(plan.limit * 5, 100)):
                     if msg.id == message.id:
@@ -169,7 +170,7 @@ async def handle(
             )
             return
 
-    summary = _preview_text(plan, target, matched)
+    summary = _preview_text(plan, target, matched, targeted_reply=replied_to is not None)
 
     if not plan.is_destructive:
         await channel.send(summary)
@@ -223,8 +224,19 @@ async def _replied_message(message: discord.Message) -> discord.Message | None:
         return None
 
 
-def _preview_text(plan: OpsPlan, target: Any, matched: list[discord.Message]) -> str:
-    lines = [f"**Plan:** {plan.describe()}"]
+def _preview_text(
+    plan: OpsPlan,
+    target: Any,
+    matched: list[discord.Message],
+    *,
+    targeted_reply: bool = False,
+) -> str:
+    # When a reply pinned the target exactly, saying "up to 20" is a lie about
+    # what will happen. What gets approved has to match what runs.
+    if targeted_reply:
+        lines = [f"**Plan:** **{plan.action}** the message you replied to"]
+    else:
+        lines = [f"**Plan:** {plan.describe()}"]
 
     if plan.is_member_action and target is not None:
         lines.append(f"**Target:** {target} (`{target.id}`)")

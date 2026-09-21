@@ -9,6 +9,7 @@ channel.
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import pytest
 
@@ -19,6 +20,7 @@ from quartermaster.discord_ops import (
     OpsPlan,
     build_matcher,
     check_hierarchy,
+    searchable_text,
     check_permissions,
     resolve_member,
 )
@@ -65,10 +67,44 @@ class Member:
 
 
 @dataclass
+class EmbedField:
+    name: str
+    value: str
+
+
+@dataclass
+class EmbedAuthor:
+    name: str = ""
+
+
+@dataclass
+class Embed:
+    title: str = ""
+    description: str = ""
+    url: str = ""
+    author: EmbedAuthor | None = None
+    footer: Any = None
+    fields: list = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        if self.fields is None:
+            self.fields = []
+
+
+@dataclass
 class Msg:
     content: str
     author: Member
     created_at: datetime
+    embeds: list = None  # type: ignore[assignment]
+    mentions: list = None  # type: ignore[assignment]
+    id: int = 0
+
+    def __post_init__(self):
+        if self.embeds is None:
+            self.embeds = []
+        if self.mentions is None:
+            self.mentions = []
 
 
 def member(mid: int, name: str, position: int = 1, guild: Guild | None = None, bot: bool = False) -> Member:
@@ -229,7 +265,7 @@ class TestMatching:
         assert [m.content for m in self._msgs() if matcher(m)] == ["BUY CRYPTO NOW"]
 
     def test_filters_by_substring_case_insensitively(self):
-        matcher = build_matcher(OpsPlan(action="delete", contains="crypto"), now=NOW)
+        matcher = build_matcher(OpsPlan(action="delete", contains_any=["crypto"]), now=NOW)
         assert [m.content for m in self._msgs() if matcher(m)] == ["BUY CRYPTO NOW"]
 
     def test_filters_by_age(self):
@@ -258,3 +294,109 @@ class TestMatching:
 
         assert selected == [injected]
         assert alice_msg not in selected, "injected text must not pull in other authors"
+
+
+BOT_ID = 5050
+
+
+class TestEmbedSearch:
+    """PatchBot and friends put their words in embeds, not in content."""
+
+    def test_embed_title_and_description_are_searchable(self):
+        m = Msg("", member(7, "PatchBot", bot=True), NOW, embeds=[
+            Embed(title="Overwatch 2 Patch Notes", description="Hero balance changes")
+        ])
+        text = searchable_text(m)
+        assert "overwatch" in text and "hero balance" in text
+
+    def test_embed_fields_are_searchable(self):
+        m = Msg("", member(7, "PatchBot", bot=True), NOW, embeds=[
+            Embed(fields=[EmbedField(name="Game", value="Genshin Impact")])
+        ])
+        assert "genshin" in searchable_text(m)
+
+    def test_matcher_finds_text_only_present_in_an_embed(self):
+        patchbot = member(7, "PatchBot", bot=True)
+        embed_msg = Msg("", patchbot, NOW, embeds=[Embed(title="Overwatch update")])
+        plain = Msg("hello", member(1, "alice"), NOW)
+
+        matcher = build_matcher(
+            OpsPlan(action="delete", contains_any=["overwatch"]), now=NOW, bot_user_id=BOT_ID
+        )
+        assert matcher(embed_msg)
+        assert not matcher(plain)
+
+    def test_has_embed_filter(self):
+        with_embed = Msg("", member(7, "PatchBot", bot=True), NOW, embeds=[Embed(title="x")])
+        without = Msg("plain text", member(1, "alice"), NOW)
+
+        matcher = build_matcher(OpsPlan(action="delete", has_embed=True), now=NOW, bot_user_id=BOT_ID)
+        assert matcher(with_embed)
+        assert not matcher(without)
+
+
+class TestMultipleTerms:
+    def test_and_in_a_request_becomes_several_terms(self):
+        plan = OpsPlan.from_json(
+            '{"action":"delete","contains_any":["overwatch","genshin"]}'
+        )
+        assert plan.contains_any == ["overwatch", "genshin"]
+
+    def test_any_term_matches(self):
+        ow = Msg("overwatch patch", member(1, "a"), NOW)
+        gi = Msg("genshin banner", member(1, "a"), NOW)
+        other = Msg("unrelated", member(1, "a"), NOW)
+
+        matcher = build_matcher(
+            OpsPlan(action="delete", contains_any=["overwatch", "genshin"]),
+            now=NOW, bot_user_id=BOT_ID,
+        )
+        assert [m.content for m in (ow, gi, other) if matcher(m)] == [
+            "overwatch patch", "genshin banner"
+        ]
+
+    def test_description_lists_every_term(self):
+        d = OpsPlan(action="delete", contains_any=["overwatch", "genshin"]).describe()
+        assert "overwatch" in d and "genshin" in d
+
+
+class TestSelfExclusion:
+    """The feedback loop: a preview matches its own filter."""
+
+    def test_bot_preview_does_not_match_its_own_filter(self):
+        bot_self = member(BOT_ID, "Quartermaster", bot=True)
+        preview = Msg(
+            "Plan: delete up to 20 message(s) containing overwatch", bot_self, NOW
+        )
+        matcher = build_matcher(
+            OpsPlan(action="delete", contains_any=["overwatch"]), now=NOW, bot_user_id=BOT_ID
+        )
+        assert not matcher(preview), "the bot would delete its own previews"
+
+    def test_the_command_that_asked_is_not_a_target(self):
+        bot_self = member(BOT_ID, "Quartermaster", bot=True)
+        command = Msg(
+            "@Quartermaster delete the overwatch messages",
+            member(1, "rojoloco"),
+            NOW,
+            mentions=[bot_self],
+        )
+        matcher = build_matcher(
+            OpsPlan(action="delete", contains_any=["overwatch"]), now=NOW, bot_user_id=BOT_ID
+        )
+        assert not matcher(command), "the instruction must not delete itself"
+
+    def test_bots_only_still_reaches_the_bot(self):
+        # Excluding self must not make "delete all bot messages" silently skip it.
+        bot_self = member(BOT_ID, "Quartermaster", bot=True)
+        msg = Msg("something", bot_self, NOW)
+        matcher = build_matcher(OpsPlan(action="delete", bots_only=True), now=NOW, bot_user_id=BOT_ID)
+        assert matcher(msg)
+
+    def test_naming_the_bot_still_reaches_it(self):
+        bot_self = member(BOT_ID, "Quartermaster", bot=True)
+        msg = Msg("something", bot_self, NOW)
+        matcher = build_matcher(
+            OpsPlan(action="delete", author_name="Quartermaster"), now=NOW, bot_user_id=BOT_ID
+        )
+        assert matcher(msg)
