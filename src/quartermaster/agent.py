@@ -125,9 +125,17 @@ class Reply:
         return self.error is None
 
 
-def _options(profile: Profile) -> ClaudeAgentOptions:
+def _options(profile: Profile, cli_path: str | None = None) -> ClaudeAgentOptions:
+    extra: dict[str, object] = {}
+    if cli_path:
+        # Must be a real executable. The SDK refuses .cmd/.bat wrappers on
+        # Windows - cmd.exe can execute commands injected through arguments and
+        # there is no reliable escaping for it - so the npm shim will not do.
+        extra["cli_path"] = cli_path
+
     return ClaudeAgentOptions(
         cwd=str(profile.cwd),
+        **extra,
         # Loads CLAUDE.md and .claude/ from cwd - the same configuration the CLI
         # reads. For the public profile that directory is not the vault, so none
         # of the vault's context is loaded either.
@@ -146,7 +154,7 @@ def _options(profile: Profile) -> ClaudeAgentOptions:
     )
 
 
-async def ask(prompt: str, profile: Profile) -> Reply:
+async def ask(prompt: str, profile: Profile, cli_path: str | None = None) -> Reply:
     """Send one message and collect the reply.
 
     Never raises. A surface that dies on a bad turn is worse than one that says
@@ -162,7 +170,7 @@ async def ask(prompt: str, profile: Profile) -> Reply:
     cost: float | None = None
 
     try:
-        async for message in query(prompt=prompt, options=_options(profile)):
+        async for message in query(prompt=prompt, options=_options(profile, cli_path)):
             if isinstance(message, AssistantMessage):
                 for block in message.content:
                     if isinstance(block, TextBlock):

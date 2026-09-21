@@ -149,7 +149,7 @@ class Quartermaster(discord.Client):
             return
 
         async with self._busy, message.channel.typing():
-            reply = await agent.ask(prompt, profile)
+            reply = await agent.ask(prompt, profile, self.settings.claude_cli)
 
         await self._send(message.channel, reply)
 

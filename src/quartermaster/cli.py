@@ -26,12 +26,19 @@ FAIL = " FAIL  "
 
 
 def _find_claude() -> str | None:
-    """Locate the Claude Code CLI.
+    """Locate a Claude Code CLI the Agent SDK will actually run.
 
-    Preference order matters. A binary on PATH is stable; the copy bundled in
-    the VSCode extension sits behind a version number and moves every time the
-    extension updates, which would break a long-running bot silently.
+    Native install first, because it is the only stable *executable*. A ``.cmd``
+    shim from npm is on PATH and looks fine, but the SDK refuses it: Windows runs
+    batch files through cmd.exe, which can execute commands injected via
+    arguments, and there is no reliable escaping for cmd.exe. The VSCode
+    extension's copy is a real .exe but sits behind a version number that moves
+    on every update.
     """
+    native = Path.home() / ".local" / "bin" / "claude.exe"
+    if native.exists():
+        return str(native)
+
     found = shutil.which("claude")
     if found:
         return found
@@ -39,6 +46,34 @@ def _find_claude() -> str | None:
     ext_root = Path.home() / ".vscode" / "extensions"
     candidates = sorted(ext_root.glob("anthropic.claude-code-*/resources/native-binary/claude.exe"))
     return str(candidates[-1]) if candidates else None
+
+
+def _claude_problem(path: str) -> str | None:
+    """Why the SDK would refuse this CLI, if it would.
+
+    'It exists' is not the same as 'it works'. An earlier version of this check
+    passed the npm .cmd shim as healthy, and the bot then failed on its first
+    message with a CLIConnectionError.
+    """
+    lowered = path.lower()
+    if lowered.endswith((".cmd", ".bat")):
+        return (
+            "This is a batch shim, and the Agent SDK refuses to run one: Windows\n"
+            "              executes .cmd via cmd.exe, which can run commands injected\n"
+            "              through arguments. Install the native build:\n"
+            "                irm https://claude.ai/install.ps1 | iex\n"
+            "              then set QM_CLAUDE_CLI to the claude.exe it reports."
+        )
+    if ".vscode" in lowered:
+        return (
+            "This is the VSCode extension's private copy. Its path contains a\n"
+            "              version number and moves on every extension update, which\n"
+            "              would break the bot without warning. Install the native build:\n"
+            "                irm https://claude.ai/install.ps1 | iex"
+        )
+    if not Path(path).exists():
+        return "That path does not exist."
+    return None
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -65,17 +100,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     claude = settings.claude_cli or _find_claude()
     if not claude:
         print(f"[{FAIL}] claude cli  not found. The Agent SDK needs it.")
-        print("              fix: npm install -g @anthropic-ai/claude-code")
-        problems += 1
-    elif ".vscode" in claude:
-        print(f"[{WARN}] claude cli  {claude}")
-        print("              This is the VSCode extension's private copy. Its path")
-        print("              changes on every extension update, which will break the")
-        print("              bot without warning. Install a stable one:")
-        print("              npm install -g @anthropic-ai/claude-code")
+        print("              fix: irm https://claude.ai/install.ps1 | iex")
         problems += 1
     else:
-        print(f"[{OK}] claude cli  {claude}")
+        problem = _claude_problem(claude)
+        if problem:
+            print(f"[{FAIL}] claude cli  {claude}")
+            print(f"              {problem}")
+            problems += 1
+        else:
+            print(f"[{OK}] claude cli  {claude}")
 
     creds = Path.home() / ".claude" / ".credentials.json"
     if creds.exists():
@@ -98,6 +132,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         ("NOTION_TOKEN", settings.notion_token, "phase 1 - notion mirror"),
         ("NOTION_CLAUDE_PAGE_ID", settings.notion_claude_page_id, "phase 1 - writable page"),
         ("DISCORD_BOT_TOKEN", settings.discord_bot_token, "phase 2 - the bot"),
+        ("DISCORD_OWNER_ID", settings.discord_owner_id, "phase 2 - who the bot answers"),
     ]
     print()
     for name, value, why in secrets:
