@@ -15,6 +15,23 @@ See `docs/` for design notes.
 3. **Markdown for what you read, SQLite for what the machine counts.** The
    database never holds the only copy of anything you'd miss.
 
+## Profiles
+
+The bot can sit in a shared server, so who is talking decides which *profile*
+answers — and the profile, not a prompt rule, decides what can be reached.
+
+| | Owner (DMs) | Public (channels) |
+| --- | --- | --- |
+| Working directory | the vault | outside it |
+| File tools | Read/Write/Edit/Grep | none |
+| Session | shared with Claude Code | separate |
+| Enabled | yes | no |
+
+A prompt instruction is not a boundary against someone who can send arbitrary
+text. Different `cwd` and different tool lists are. Granting the public profile
+a capability later means adding to an empty list, never removing access from a
+privileged agent.
+
 ## Layout
 
 ```
@@ -23,7 +40,10 @@ src/quartermaster/
 ├── db.py              state.db — machine state only, rebuildable
 ├── mutes.py           the mute list (markdown, hand-editable)
 ├── notion_sync.py     the daily one-way Notion pull
-├── cli.py             qm doctor / init / sync / mute
+├── agent.py           Agent SDK wrapper; profiles are the security boundary
+├── surfaces/
+│   └── discord_bot.py the Discord surface
+├── cli.py             qm doctor / init / sync / bot / mute
 └── integrations/
     └── notion.py      REST client
 vault-template/        copied into the real vault by `qm init`
@@ -62,7 +82,7 @@ vault, the Claude CLI, your auth, and which secrets are set.
 | Phase | State |
 | --- | --- |
 | 1 — Vault and Notion mirror | Built; needs `NOTION_TOKEN` to run end to end |
-| 2 — Discord bot | Not started |
+| 2 — Discord bot | Built; needs `DISCORD_BOT_TOKEN` and `DISCORD_OWNER_ID` |
 | 3 — Google, Microsoft To Do, Spotify | Not started |
 | 4 — The weekly digest | Not started |
 | 5 — Infra (Tailscale, Uptime Kuma, restic) | Not started — needs WSL2 + Docker installed |

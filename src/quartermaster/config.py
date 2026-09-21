@@ -121,6 +121,16 @@ class Settings:
     def db_path(self) -> Path:
         return self.system_dir / "state.db"
 
+    @property
+    def public_workspace(self) -> Path:
+        """Working directory for the public agent profile.
+
+        Deliberately outside the vault. It is the containment boundary for
+        anyone who is not the owner, so it must never be derived from
+        ``self.vault``.
+        """
+        return REPO_ROOT / "public-workspace"
+
     def require(self, *names: str) -> None:
         """Fail early and by name when a secret a task needs is absent.
 

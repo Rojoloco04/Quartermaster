@@ -3,6 +3,7 @@
     qm doctor   what's configured, what's missing, what's broken
     qm init     create the vault from the template
     qm sync     pull Notion into the vault
+    qm bot      run the Discord bot
     qm mute     silence something permanently
 """
 
@@ -186,6 +187,12 @@ def cmd_sync(args: argparse.Namespace) -> int:
     return 1 if stats.failed else 0
 
 
+def cmd_bot(args: argparse.Namespace) -> int:
+    from .surfaces.discord_bot import run
+
+    return run(load_settings())
+
+
 def cmd_mute(args: argparse.Namespace) -> int:
     settings = load_settings()
     added = mutes.add(settings.muted_file, args.item_id, args.summary or "", args.reason or "")
@@ -211,6 +218,8 @@ def main(argv: list[str] | None = None) -> int:
     p_sync = sub.add_parser("sync", help="pull Notion into the vault")
     p_sync.add_argument("--force", action="store_true", help="refetch every page, ignoring cache")
     p_sync.set_defaults(func=cmd_sync)
+
+    sub.add_parser("bot", help="run the Discord bot").set_defaults(func=cmd_bot)
 
     p_mute = sub.add_parser("mute", help="permanently silence an item")
     p_mute.add_argument("item_id", help="e.g. stale:abc123 or event:artist/Tool")
