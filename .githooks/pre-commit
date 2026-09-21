@@ -37,6 +37,10 @@ SECRET_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("Slack token", re.compile(r"xox[baprs]-[A-Za-z0-9\-]{10,}")),
     ("Private key block", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----")),
     ("AWS access key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    # ASIA marks temporary STS credentials. Notion embeds these in pre-signed
+    # attachment URLs, so they can reach a mirrored vault without anyone ever
+    # pasting a credential — which is exactly how they got past this hook once.
+    ("AWS temporary credential", re.compile(r"\bASIA[0-9A-Z]{16}\b")),
 ]
 
 # Personal identifiers. Everything here is fine in the private vault repo and

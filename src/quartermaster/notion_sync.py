@@ -25,6 +25,7 @@ from pathlib import Path
 
 from . import db
 from .config import Settings
+from .notion_clean import clean
 from .integrations.notion import NotionClient, page_title
 
 _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
@@ -181,6 +182,14 @@ def assign_paths(index: dict[str, dict], notion_dir: Path) -> dict[str, Path]:
     return paths
 
 
+def _relative_link(from_file: Path, to_file: Path) -> str:
+    """A POSIX relative link from one mirrored page to another."""
+    import os
+
+    rel = os.path.relpath(to_file, from_file.parent).replace("\\", "/")
+    return rel if rel.startswith(".") else f"./{rel}"
+
+
 def _frontmatter(obj: dict, path_hint: str, truncated: bool, unknown: list[str]) -> str:
     safe_title = _object_title(obj).replace(DQUOTE, SQUOTE)
     lines = [
@@ -247,8 +256,17 @@ def sync(settings: Settings, force: bool = False) -> SyncStats:
                 continue
 
             rel = path.relative_to(notion_dir).as_posix()
+
+            # Rewrite child-page references as links relative to THIS file, so
+            # the agent can follow the hierarchy instead of guessing filenames.
+            link_targets = {
+                other_id: _relative_link(path, other_path)
+                for other_id, other_path in paths.items()
+                if other_id != obj_id
+            }
+
             body = _frontmatter(obj, rel, content.truncated, content.unknown_block_ids)
-            body += content.markdown
+            body += clean(content.markdown, link_targets=link_targets)
 
             # A renamed or moved page would otherwise leave its old file behind.
             if row and row["vault_path"] and Path(row["vault_path"]) != path:
@@ -257,7 +275,7 @@ def sync(settings: Settings, force: bool = False) -> SyncStats:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(body, encoding="utf-8")
             stats.written += 1
-            if not content.markdown.strip():
+            if not clean(content.markdown).strip():
                 # Legitimate for a genuinely blank Notion page, but a large
                 # count means the content is not being read at all.
                 stats.empty.append(_object_title(obj))
