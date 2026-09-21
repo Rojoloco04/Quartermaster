@@ -16,8 +16,10 @@ a person then declines.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
 from typing import Any
 
 import discord
@@ -29,6 +31,7 @@ from ..discord_ops import OpsPlan
 log = logging.getLogger(__name__)
 
 CONFIRM_TIMEOUT = 120.0
+TENOR_ENDPOINT = "https://tenor.googleapis.com/v2/search"
 PREVIEW_SAMPLE = 5
 
 
@@ -140,7 +143,12 @@ async def handle(
 
     matched: list[discord.Message] = []
     replied_to: discord.Message | None = None
-    if not plan.is_member_action:
+
+    # say and gif create a message rather than acting on one, so there is
+    # nothing to match and "nothing matched" would be a false failure.
+    needs_target = not plan.is_member_action and plan.action not in ("say", "gif")
+
+    if needs_target:
         replied_to = await _replied_message(message)
         if replied_to is not None:
             # "delete that message" while replying to it is the most natural way
@@ -172,10 +180,29 @@ async def handle(
 
     summary = _preview_text(plan, target, matched, targeted_reply=replied_to is not None)
 
-    if not plan.is_destructive:
+    # Counting only reports; there is nothing to run.
+    if plan.action == "count":
         await channel.send(summary)
-        if plan.action == "count":
-            return
+        return
+
+    # Only irreversible actions are worth interrupting for. Reacting, posting a
+    # message or a gif adds to the channel rather than removing from it, and
+    # undoing one is trivial — a confirmation step there is pure friction.
+    if not plan.is_destructive:
+        try:
+            result = await _execute(plan, channel, target, matched, message.author)
+        except discord.Forbidden as exc:
+            result = f"❌ Discord refused: {exc.text or exc}"
+        except discord.HTTPException as exc:
+            result = f"❌ Discord error: {exc.text or exc}"
+
+        # A bare "Sent." reads oddly next to the thing it just sent.
+        if plan.action in ("say", "gif"):
+            if result.startswith("❌"):
+                await channel.send(result)
+        else:
+            await channel.send(result)
+        return
 
     view = ConfirmView(message.author.id)
     prompt_msg = await channel.send(summary, view=view)
@@ -197,6 +224,41 @@ async def handle(
         result = f"❌ Discord error: {exc.text or exc}"
 
     await prompt_msg.edit(content=summary + f"\n\n{result}", view=None)
+
+
+def _tenor_key() -> str | None:
+    return os.getenv("TENOR_API_KEY") or None
+
+
+async def _find_gif(query: str) -> str | None:
+    """First Tenor result for a query, or None.
+
+    Optional by design: no key just means gif search is unavailable, not that
+    the bot fails to start.
+    """
+    key = _tenor_key()
+    if not key or not query.strip():
+        return None
+
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(
+                TENOR_ENDPOINT,
+                params={
+                    "q": query, "key": key, "limit": 1,
+                    "media_filter": "gif", "contentfilter": "medium",
+                },
+            )
+            resp.raise_for_status()
+            results = resp.json().get("results") or []
+            if not results:
+                return None
+            return results[0]["media_formats"]["gif"]["url"]
+    except Exception:  # noqa: BLE001 - a failed search is not a crash
+        log.exception("tenor search failed")
+        return None
 
 
 async def _replied_message(message: discord.Message) -> discord.Message | None:
@@ -270,6 +332,39 @@ async def _execute(
     """Perform the approved plan. No model involvement past this point."""
     reason = f"Quartermaster, requested by {invoker} — {plan.reason or 'no reason given'}"[:500]
 
+    if plan.action in ("react", "unreact"):
+        if not matched:
+            return "❌ Reply to the message you want me to react to."
+        if not plan.emoji:
+            return "❌ I couldn't tell which emoji you meant."
+        try:
+            if plan.action == "react":
+                await matched[0].add_reaction(plan.emoji)
+                return f"✅ Reacted with {plan.emoji}."
+            await matched[0].clear_reaction(plan.emoji)
+            return f"✅ Removed {plan.emoji}."
+        except discord.HTTPException:
+            # Almost always an emoji from a server the bot isn't in.
+            return f"❌ I can't use {plan.emoji} — custom emoji only work in servers I'm in."
+
+    if plan.action == "say":
+        if not plan.text:
+            return "❌ Nothing to say."
+        await channel.send(plan.text)
+        return "✅ Sent."
+
+    if plan.action == "gif":
+        url = await _find_gif(plan.query or "")
+        if url is None:
+            return (
+                "❌ GIF search needs a Tenor key. Add `TENOR_API_KEY` to .env "
+                "(free at developers.google.com/tenor) and restart me."
+                if not _tenor_key()
+                else f"❌ Nothing found for `{plan.query}`."
+            )
+        await channel.send(url)
+        return "✅ Sent."
+
     if plan.action == "delete":
         deleted = 0
         for msg in matched:
@@ -310,4 +405,43 @@ async def _execute(
         await target.timeout(None, reason=reason)
         return f"✅ Removed timeout from {target}."
 
+    if plan.action in ("voice_mute", "voice_unmute", "voice_deafen", "voice_undeafen"):
+        if target.voice is None:
+            return f"❌ {target} isn't in a voice channel, so there's nothing to change."
+
+        on = plan.action in ("voice_mute", "voice_deafen")
+        field = "mute" if "mute" in plan.action else "deafen"
+        await target.edit(**{field: on}, reason=reason)
+
+        verb = f"{'' if on else 'un'}{field}d"
+        if on and plan.duration_seconds:
+            asyncio.create_task(_undo_after(target, field, plan.duration_seconds, reason))
+            # Stated plainly: this timer lives in memory only.
+            return (
+                f"✅ Voice {verb} {target} for {plan.duration_seconds}s. "
+                "_The undo is scheduled in memory — if I restart before then, "
+                "they stay that way._"
+            )
+        return f"✅ Voice {verb} {target}."
+
+    if plan.action == "disconnect":
+        if target.voice is None:
+            return f"❌ {target} isn't in a voice channel."
+        await target.move_to(None, reason=reason)
+        return f"✅ Disconnected {target} from voice."
+
     return "Nothing to do."
+
+
+async def _undo_after(target: Any, field: str, seconds: int, reason: str) -> None:
+    """Reverse a voice mute/deafen after a delay.
+
+    Discord voice mutes have no duration of their own, so "mute them for 30
+    seconds" has to be two calls with a wait between. Deliberately best-effort:
+    the timer is in memory, and the caller tells the user that.
+    """
+    try:
+        await asyncio.sleep(seconds)
+        await target.edit(**{field: False}, reason=f"{reason} (auto-undo after {seconds}s)")
+    except Exception:  # noqa: BLE001 - a failed undo must not kill the bot
+        log.exception("failed to undo voice %s on %s", field, target)

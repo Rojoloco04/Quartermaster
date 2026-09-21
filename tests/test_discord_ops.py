@@ -400,3 +400,45 @@ class TestSelfExclusion:
             OpsPlan(action="delete", author_name="Quartermaster"), now=NOW, bot_user_id=BOT_ID
         )
         assert matcher(msg)
+
+
+class TestActionClasses:
+    """Which actions interrupt the user, and which just happen."""
+
+    def test_expressive_actions_are_not_destructive(self):
+        # Reacting or posting adds to a channel rather than removing from it,
+        # and undoing one is trivial. Confirming them is pure friction.
+        for action in ("react", "say", "gif", "count"):
+            assert not OpsPlan(action=action).is_destructive, action
+
+    def test_removal_actions_are_destructive(self):
+        for action in ("delete", "kick", "ban", "timeout", "voice_mute", "disconnect"):
+            assert OpsPlan(action=action).is_destructive, action
+
+    def test_voice_mute_is_not_a_timeout(self):
+        # Different Discord operation, different permission, different scope.
+        from quartermaster.discord_ops import REQUIRED_PERMISSION
+
+        assert REQUIRED_PERMISSION["voice_mute"] == "mute_members"
+        assert REQUIRED_PERMISSION["timeout"] == "moderate_members"
+
+    def test_expressive_actions_require_only_their_own_permission(self):
+        from quartermaster.discord_ops import REQUIRED_PERMISSION
+
+        assert REQUIRED_PERMISSION["react"] == "add_reactions"
+        assert REQUIRED_PERMISSION["say"] == "send_messages"
+        # Removing someone else's reaction is moderation, not expression.
+        assert REQUIRED_PERMISSION["unreact"] == "manage_messages"
+
+    def test_voice_duration_is_capped(self):
+        from quartermaster.discord_ops import MAX_VOICE_DURATION_SECONDS
+
+        plan = OpsPlan.from_json(
+            '{"action":"voice_mute","target_user":"dave","duration_seconds":999999}'
+        )
+        assert plan.duration_seconds == MAX_VOICE_DURATION_SECONDS
+
+    def test_expressive_plans_describe_themselves(self):
+        assert "🔥" in OpsPlan(action="react", emoji="🔥").describe()
+        assert "hello" in OpsPlan(action="say", text="hello").describe()
+        assert "cats" in OpsPlan(action="gif", query="cats").describe()

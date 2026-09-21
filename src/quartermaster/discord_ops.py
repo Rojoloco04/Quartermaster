@@ -38,13 +38,32 @@ from typing import Any, Literal
 Action = Literal[
     "delete", "pin", "unpin", "count",
     "kick", "ban", "unban", "timeout", "untimeout",
+    # Voice-channel moderation. Distinct from timeout: a timeout silences someone
+    # everywhere for a set period, a voice mute only affects the voice channel
+    # and is a toggle with no duration of its own.
+    "voice_mute", "voice_unmute", "voice_deafen", "voice_undeafen", "disconnect",
+    # Expressive actions. These add to a channel rather than removing from it,
+    # so none of them are destructive and none require confirmation.
+    "react", "unreact", "say", "gif",
 ]
 
 # Actions that change something a human cannot trivially undo.
-DESTRUCTIVE: set[str] = {"delete", "unpin", "kick", "ban", "timeout"}
+DESTRUCTIVE: set[str] = {
+    "delete", "unpin", "kick", "ban", "timeout",
+    "voice_mute", "voice_deafen", "disconnect",
+}
 
 # Actions that operate on a person rather than on messages.
-MEMBER_ACTIONS: set[str] = {"kick", "ban", "unban", "timeout", "untimeout"}
+MEMBER_ACTIONS: set[str] = {
+    "kick", "ban", "unban", "timeout", "untimeout",
+    "voice_mute", "voice_unmute", "voice_deafen", "voice_undeafen", "disconnect",
+}
+
+# Voice mute has no duration in Discord - it is a toggle. A requested duration
+# is honoured by scheduling the undo, which is best-effort: a bot restart
+# loses the timer and the person stays muted. Say so rather than imply a
+# guarantee.
+MAX_VOICE_DURATION_SECONDS = 3600
 
 # Discord refuses to bulk-delete anything older than this.
 BULK_DELETE_MAX_AGE = timedelta(days=14)
@@ -93,9 +112,25 @@ PLAN_SCHEMA: dict[str, Any] = {
             "type": ["integer", "null"],
             "description": "For timeout: duration in minutes.",
         },
+        "duration_seconds": {
+            "type": ["integer", "null"],
+            "description": "For voice mute/deafen: how long, if a duration was asked for.",
+        },
         "ban_delete_days": {
             "type": ["integer", "null"],
             "description": "For ban: days of the target's messages to also delete. Default 0.",
+        },
+        "emoji": {
+            "type": ["string", "null"],
+            "description": "For react/unreact: the emoji, e.g. a unicode emoji or :name:.",
+        },
+        "text": {
+            "type": ["string", "null"],
+            "description": "For say: exactly the text to send, verbatim.",
+        },
+        "query": {
+            "type": ["string", "null"],
+            "description": "For gif: what to search for.",
         },
         "reason": {"type": "string", "description": "One short sentence, for the audit log."},
     },
@@ -112,6 +147,14 @@ Rules:
 - "embeds", "link previews", "bot posts with cards" mean has_embed: true. An embed
   is still a message, so the action stays "delete".
 - For a ban, set ban_delete_days to 0 unless message deletion was explicitly asked for.
+- "voice mute", "server mute", "mute them in vc" -> voice_mute (NOT timeout).
+  A plain "mute" with no mention of voice means timeout. "deafen" -> voice_deafen,
+  "disconnect"/"kick from vc" -> disconnect.
+- A duration on a voice action goes in duration_seconds.
+- "react with X", "put an X on that" -> react, with emoji set. Removing someone
+  else's reaction is unreact.
+- "say X", "post X", "tell them X" -> say, with text set to exactly what to send.
+- "send a gif of X", "gif X" -> gif, with query set.
 - Use "count" ONLY when the request genuinely asks how many, or is not a
   moderation action at all. A request to delete something is always "delete",
   even if the phrasing is unusual.
@@ -132,7 +175,11 @@ class OpsPlan:
     newer_than_minutes: int | None = None
     bots_only: bool | None = None
     timeout_minutes: int | None = None
+    duration_seconds: int | None = None
     ban_delete_days: int = 0
+    emoji: str | None = None
+    text: str | None = None
+    query: str | None = None
     reason: str = ""
 
     @property
@@ -161,6 +208,9 @@ class OpsPlan:
         timeout = data.get("timeout_minutes")
         timeout = max(1, min(int(timeout), MAX_TIMEOUT_MINUTES)) if timeout else None
 
+        duration = data.get("duration_seconds")
+        duration = max(1, min(int(duration), MAX_VOICE_DURATION_SECONDS)) if duration else None
+
         ban_days = int(data.get("ban_delete_days") or 0)
         ban_days = max(0, min(ban_days, MAX_BAN_DELETE_DAYS))
 
@@ -176,7 +226,11 @@ class OpsPlan:
             newer_than_minutes=int(newer) if newer else None,
             bots_only=data.get("bots_only"),
             timeout_minutes=timeout,
+            duration_seconds=duration,
             ban_delete_days=ban_days,
+            emoji=(data.get("emoji") or None),
+            text=(data.get("text") or None),
+            query=(data.get("query") or None),
             reason=str(data.get("reason") or "").strip(),
         )
 
@@ -186,10 +240,20 @@ class OpsPlan:
         Built from the plan's own fields rather than the model's prose, so what
         gets approved is exactly what will execute.
         """
+        if self.action in ("react", "unreact"):
+            verb = "react with" if self.action == "react" else "remove"
+            return f"**{verb}** {self.emoji or '(no emoji)'}"
+        if self.action == "say":
+            return f"**say:** {self.text or '(nothing)'}"
+        if self.action == "gif":
+            return f"**post a gif** of `{self.query or '(nothing)'}`"
+
         if self.is_member_action:
             bits = [f"**{self.action}** **{self.target_user or '(nobody named)'}**"]
             if self.action == "timeout" and self.timeout_minutes:
                 bits.append(f"for **{self.timeout_minutes} min**")
+            if self.duration_seconds:
+                bits.append(f"for **{self.duration_seconds}s**, then undo automatically")
             if self.action == "ban" and self.ban_delete_days:
                 bits.append(f"and delete **{self.ban_delete_days} day(s)** of their messages")
             return " ".join(bits)
@@ -233,6 +297,15 @@ REQUIRED_PERMISSION: dict[str, str] = {
     "unban": "ban_members",
     "timeout": "moderate_members",
     "untimeout": "moderate_members",
+    "voice_mute": "mute_members",
+    "voice_unmute": "mute_members",
+    "voice_deafen": "deafen_members",
+    "voice_undeafen": "deafen_members",
+    "disconnect": "move_members",
+    "react": "add_reactions",
+    "unreact": "manage_messages",  # removing someone else's reaction is moderation
+    "say": "send_messages",
+    "gif": "send_messages",
 }
 
 
