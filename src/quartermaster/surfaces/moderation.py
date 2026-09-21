@@ -131,21 +131,33 @@ async def handle(
 
     matched: list[discord.Message] = []
     if not plan.is_member_action:
-        matcher = discord_ops.build_matcher(plan)
-        try:
-            async for msg in channel.history(limit=max(plan.limit * 5, 100)):
-                if msg.id == message.id:
-                    continue
-                if matcher(msg):
-                    matched.append(msg)
-                if len(matched) >= plan.limit:
-                    break
-        except discord.Forbidden:
-            await channel.send("❌ I can't read this channel's history.")
-            return
+        replied_to = await _replied_message(message)
+        if replied_to is not None:
+            # "delete that message" while replying to it is the most natural way
+            # to ask, and it is completely unambiguous - Discord tells us exactly
+            # which message you meant. Honour it instead of guessing from a
+            # history scan, which is how "that" would otherwise become "the last
+            # twenty".
+            matched = [replied_to]
+        else:
+            matcher = discord_ops.build_matcher(plan)
+            try:
+                async for msg in channel.history(limit=max(plan.limit * 5, 100)):
+                    if msg.id == message.id:
+                        continue
+                    if matcher(msg):
+                        matched.append(msg)
+                    if len(matched) >= plan.limit:
+                        break
+            except discord.Forbidden:
+                await channel.send("❌ I can't read this channel's history.")
+                return
 
         if not matched:
-            await channel.send("Nothing matched that. Nothing changed.")
+            await channel.send(
+                "Nothing matched that. Nothing changed.\n"
+                "_Tip: reply to a message and say \"delete that\" to target it exactly._"
+            )
             return
 
     summary = _preview_text(plan, target, matched)
@@ -175,6 +187,31 @@ async def handle(
         result = f"❌ Discord error: {exc.text or exc}"
 
     await prompt_msg.edit(content=summary + f"\n\n{result}", view=None)
+
+
+async def _replied_message(message: discord.Message) -> discord.Message | None:
+    """The message this one is a reply to, if any.
+
+    Discord resolves the reference for us most of the time; when it doesn't
+    (the referenced message wasn't in the cache) fetch it. A DeletedReferencedMessage
+    means the target is already gone, so there is nothing to act on.
+    """
+    ref = message.reference
+    if ref is None:
+        return None
+
+    resolved = getattr(ref, "resolved", None)
+    if isinstance(resolved, discord.Message):
+        return resolved
+    if isinstance(resolved, discord.DeletedReferencedMessage):
+        return None
+
+    if ref.message_id is None:
+        return None
+    try:
+        return await message.channel.fetch_message(ref.message_id)
+    except (discord.NotFound, discord.Forbidden, discord.HTTPException):
+        return None
 
 
 def _preview_text(plan: OpsPlan, target: Any, matched: list[discord.Message]) -> str:

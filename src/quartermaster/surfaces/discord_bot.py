@@ -102,17 +102,18 @@ class Quartermaster(discord.Client):
         self._busy = asyncio.Lock()
 
     async def on_ready(self) -> None:
-        log.info("connected as %s", self.user)
-        print(f"\nQuartermaster online as {self.user}")
-        print(f"  vault:       {self.settings.vault}")
-        print(f"  transcripts: {agent.transcript_dir(self.settings.vault)}")
-        print(f"  owner id:    {self.settings.discord_owner_id}")
-        print(f"  public mode: {'on' if self.public.enabled else 'off'}")
+        # Logging rather than print: print() is block-buffered when stdout is a
+        # pipe, so the whole startup banner vanished when run in the background
+        # and the "moderation is off" warning never reached the log.
+        log.info("online as %s", self.user)
+        log.info("  vault:       %s", self.settings.vault)
+        log.info("  transcripts: %s", agent.transcript_dir(self.settings.vault))
+        log.info("  owner id:    %s", self.settings.discord_owner_id)
+        log.info("  public mode: %s", "on" if self.public.enabled else "off")
         if self.moderation_enabled:
-            print("  moderation:  on (gated by each invoker's own Discord permissions)")
+            log.info("  moderation:  on (gated by each invoker's own permissions)")
         else:
-            print("  moderation:  OFF - SERVER MEMBERS INTENT is not enabled")
-        print("\nDM the bot to talk to it. Ctrl-C to stop.\n")
+            log.warning("  moderation:  OFF - SERVER MEMBERS INTENT is not enabled")
 
     def _route(self, message: discord.Message) -> str | None:
         """Decide which surface handles this message, if any.
@@ -131,8 +132,8 @@ class Quartermaster(discord.Client):
 
         # Moderation in a guild channel. Anyone may ask; whether anything
         # happens is decided by their real Discord permissions, checked in code.
-        if mentioned and message.guild is not None and self.moderation_enabled:
-            return "moderation"
+        if mentioned and message.guild is not None:
+            return "moderation" if self.moderation_enabled else "moderation_off"
 
         if mentioned and self.public.enabled:
             return "public"
@@ -156,6 +157,18 @@ class Quartermaster(discord.Client):
             prompt = f"{prompt}\n\nAttachments:\n{listing}".strip()
 
         if not prompt:
+            return
+
+        if route == "moderation_off":
+            # Never ignore a mention in silence: silence is indistinguishable
+            # from being broken, which is exactly how this failed the first time
+            # someone used it.
+            await message.channel.send(
+                "I can't moderate yet — **SERVER MEMBERS INTENT** is off, so I can't "
+                "resolve names or read roles.\n"
+                "Enable it at discord.com/developers/applications → your app → Bot "
+                "→ Privileged Gateway Intents, then restart me."
+            )
             return
 
         if route == "moderation":
