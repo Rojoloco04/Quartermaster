@@ -111,15 +111,8 @@ class NotionClient:
 
     def page_markdown(self, page_id: str) -> PageMarkdown:
         data = self._request("GET", f"/pages/{page_id}/markdown")
-        raw = data.get("page_markdown")
-        # The field is documented as an object; older responses returned a bare
-        # string. Accept both rather than lose the page over a shape change.
-        if isinstance(raw, dict):
-            text = raw.get("markdown") or raw.get("content") or ""
-        else:
-            text = raw or ""
         return PageMarkdown(
-            markdown=text,
+            markdown=extract_markdown(data),
             truncated=bool(data.get("truncated")),
             unknown_block_ids=list(data.get("unknown_block_ids") or []),
         )
@@ -135,6 +128,60 @@ class NotionClient:
             f"/pages/{page_id}/markdown",
             json={"replace_content": markdown},
         )
+
+
+# Keys that have carried page content, most current first. `markdown` is what
+# the API returns today; `page_markdown` was a misreading of the docs, where it
+# is actually the response's `object` type discriminator. Kept as a fallback in
+# case the shape ever changes back.
+_CONTENT_KEYS = ("markdown", "page_markdown", "content")
+
+# Response fields that are metadata, so a string here is never page content.
+_METADATA_KEYS = {"object", "id", "request_id", "url", "type"}
+
+
+class MarkdownShapeError(NotionError):
+    """The response carried content we did not know how to read.
+
+    This is its own error because the failure it guards against is the quiet
+    one: returning "" for a page that actually had text would mirror 79 pages
+    of empty files and report success, leaving the agent certain it had read
+    knowledge it never saw.
+    """
+
+
+def extract_markdown(data: dict) -> str:
+    """Pull page content out of a markdown response.
+
+    Returns "" only when the page is genuinely empty. If the payload holds
+    substantial text under a key we do not recognise, this raises rather than
+    silently returning nothing.
+    """
+    for key in _CONTENT_KEYS:
+        value = data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+        # Tolerate a nested object shape without assuming one.
+        if isinstance(value, dict):
+            for inner in ("markdown", "content", "text"):
+                nested = value.get(inner)
+                if isinstance(nested, str) and nested.strip():
+                    return nested
+
+    # Nothing found. Before accepting "empty page", make sure we are not simply
+    # looking in the wrong place.
+    for key, value in data.items():
+        if key in _METADATA_KEYS or key in _CONTENT_KEYS:
+            continue
+        if isinstance(value, str) and len(value.strip()) > 80:
+            raise MarkdownShapeError(
+                f"Response carries text under unexpected key {key!r} "
+                f"({len(value)} chars). The API shape changed; update "
+                f"_CONTENT_KEYS in integrations/notion.py rather than "
+                f"mirroring empty pages."
+            )
+
+    return ""
 
 
 def page_title(page: dict) -> str:

@@ -167,8 +167,17 @@ def cmd_sync(args: argparse.Namespace) -> int:
     stats = sync(settings, force=args.force)
     print(stats.summary())
 
-    # Both of these are reported loudly rather than swallowed: a quiet partial
-    # sync is how the agent ends up confidently wrong.
+    # Every partial outcome below is reported rather than swallowed. A quiet
+    # partial sync is how the agent ends up confidently wrong about what it
+    # has read.
+    if stats.empty and stats.written and len(stats.empty) > stats.written / 2:
+        print()
+        print(f"  WARNING: {len(stats.empty)} of {stats.written} pages mirrored with no content.")
+        print("  That is almost certainly a parsing bug, not that many blank pages.")
+        print("  The mirror is not trustworthy until this is resolved.")
+    elif stats.empty:
+        print(f"  {len(stats.empty)} page(s) were blank in Notion (mirrored as empty).")
+
     for title in stats.truncated:
         print(f"  TRUNCATED: {title} - mirror is incomplete, see the file's frontmatter")
     for title, err in stats.failed:

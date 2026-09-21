@@ -7,7 +7,7 @@ truncation flag means the agent answers confidently from half a page.
 
 from pathlib import Path
 
-from quartermaster.notion_sync import _frontmatter, _vault_path, slugify
+from quartermaster.notion_sync import _frontmatter, _vault_path, assign_paths, slugify
 
 
 def page(pid: str, title: str, parent: str | None = None) -> dict:
@@ -96,3 +96,78 @@ class TestFrontmatter:
         fm = _frontmatter(page("abc", 'The "Big" Page'), "p-abc.md", False, [])
         title_line = next(ln for ln in fm.splitlines() if ln.startswith("title:"))
         assert title_line.count('"') == 2, f"unbalanced quotes would break YAML: {title_line}"
+
+
+class TestNonAsciiTitles:
+    """Regression: three CJK-titled pages once collapsed onto one file.
+
+    ASCII-folding with errors='ignore' deletes CJK entirely, so 中文, 日本語 and
+    한국어 all slugified to 'untitled'. Combined with a non-unique id suffix,
+    two of the three pages were silently overwritten and lost.
+    """
+
+    def test_cjk_titles_survive_slugification(self):
+        for title in ("中文", "日本語", "한국어"):
+            assert slugify(title) == title.lower(), f"{title} must not be erased"
+
+    def test_distinct_cjk_titles_produce_distinct_slugs(self):
+        slugs = {slugify(t) for t in ("中文", "日本語", "한국어")}
+        assert len(slugs) == 3
+
+    def test_mixed_script_still_prefers_ascii(self):
+        assert slugify("Notes 中文") == "notes"
+
+    def test_illegal_filename_characters_are_removed(self):
+        assert "/" not in slugify("中文/日本語")
+        assert ":" not in slugify("中文:test")
+
+    def test_windows_reserved_names_are_escaped(self):
+        # 'con.md' is unopenable on Windows.
+        assert slugify("CON") != "con"
+        assert slugify("nul") != "nul"
+
+
+class TestPathUniqueness:
+    """No two pages may ever claim the same file. Losing one is silent."""
+
+    def test_identical_titles_and_id_prefix_do_not_collide(self):
+        # Real ids from the workspace: they share the first eight characters.
+        index = {
+            "28b7c599fefe80658df2f6c3aebbb64c": page("28b7c599fefe80658df2f6c3aebbb64c", "中文"),
+            "28b7c599fefe800eaaabc1dc6021200a": page("28b7c599fefe800eaaabc1dc6021200a", "日本語"),
+            "28b7c599fefe80f2924bd007d6ee240e": page("28b7c599fefe80f2924bd007d6ee240e", "한국어"),
+        }
+        paths = assign_paths(index, Path("/vault/notion"))
+        assert len(set(paths.values())) == 3
+
+    def test_pages_with_the_same_title_do_not_collide(self):
+        index = {
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": page("a" * 32, "Notes"),
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": page("b" * 32, "Notes"),
+        }
+        paths = assign_paths(index, Path("/vault/notion"))
+        assert len(set(paths.values())) == 2
+
+    def test_case_only_differences_do_not_collide(self):
+        # NTFS is case-insensitive: 'Notes-x.md' and 'notes-x.md' are one file.
+        index = {
+            "1" * 32: page("1" * 32, "NOTES"),
+            "2" * 32: page("2" * 32, "notes"),
+        }
+        paths = assign_paths(index, Path("/vault/notion"))
+        assert len({str(p).lower() for p in paths.values()}) == 2
+
+    def test_every_page_gets_a_path(self):
+        index = {f"{i:032x}": page(f"{i:032x}", "Same Title") for i in range(25)}
+        paths = assign_paths(index, Path("/vault/notion"))
+        assert len(paths) == 25
+        assert len(set(paths.values())) == 25
+
+    def test_assignment_is_deterministic(self):
+        index = {
+            "28b7c599fefe80658df2f6c3aebbb64c": page("28b7c599fefe80658df2f6c3aebbb64c", "中文"),
+            "28b7c599fefe800eaaabc1dc6021200a": page("28b7c599fefe800eaaabc1dc6021200a", "日本語"),
+        }
+        first = assign_paths(index, Path("/vault/notion"))
+        second = assign_paths(index, Path("/vault/notion"))
+        assert first == second, "an unstable mapping would churn files on every sync"

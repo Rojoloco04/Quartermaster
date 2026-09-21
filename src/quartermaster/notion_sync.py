@@ -29,14 +29,60 @@ from .integrations.notion import NotionClient, page_title
 
 _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
 
+# Characters Windows forbids in a filename, plus control characters.
+_ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
+_WHITESPACE = re.compile(r"\s+")
+
+# Device names Windows still reserves, with or without an extension.
+_RESERVED = {
+    "con", "prn", "aux", "nul",
+    *(f"com{i}" for i in range(1, 10)),
+    *(f"lpt{i}" for i in range(1, 10)),
+}
+
 DQUOTE = '"'
 SQUOTE = "'"
 
 
+def _has_letters_or_digits(text: str) -> bool:
+    """True if the text contains a letter or digit in any script.
+
+    Distinguishes a title ASCII-folding cannot represent (中文) from one that
+    is genuinely just punctuation ("!!!"). The first is worth preserving
+    verbatim; the second should become "untitled".
+    """
+    return any(unicodedata.category(ch)[0] in ("L", "N") for ch in text)
+
+
 def slugify(text: str, max_len: int = 60) -> str:
-    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
-    slug = _SLUG_STRIP.sub("-", text.lower()).strip("-")
-    return (slug[:max_len].rstrip("-")) or "untitled"
+    """Turn a page title into a filename component.
+
+    ASCII is preferred because it greps and types easily. But ASCII-folding a
+    title that has no ASCII in it at all — 中文, 日本語, 한국어 — yields an empty
+    string, and three such pages previously collapsed onto one filename and
+    silently overwrote each other. So when folding destroys the title, keep the
+    original characters instead. NTFS and git both handle them fine, and
+    `中文-<id>.md` is a far more useful name than `untitled-<id>.md`.
+    """
+    folded = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    slug = _SLUG_STRIP.sub("-", folded.lower()).strip("-")
+
+    if not slug and _has_letters_or_digits(text):
+        # Folding destroyed a real title. Preserve it, minus what the
+        # filesystem forbids. Guarded by the letter check so a title of pure
+        # punctuation ("!!!") still becomes "untitled" rather than a filename
+        # made of symbols.
+        kept = _ILLEGAL.sub("", text)
+        kept = _WHITESPACE.sub("-", kept).strip("-. ")
+        slug = kept.lower()
+
+    slug = slug[:max_len].rstrip("-. ")
+
+    if not slug:
+        return "untitled"
+    if slug.split(".")[0] in _RESERVED:
+        return f"{slug}-page"
+    return slug
 
 
 @dataclass
@@ -46,6 +92,7 @@ class SyncStats:
     unchanged: int = 0
     removed: int = 0
     truncated: list[str] = field(default_factory=list)
+    empty: list[str] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
 
     def summary(self) -> str:
@@ -55,6 +102,8 @@ class SyncStats:
             f"{self.unchanged} unchanged",
             f"{self.removed} removed",
         ]
+        if self.empty:
+            bits.append(f"{len(self.empty)} empty")
         if self.truncated:
             bits.append(f"{len(self.truncated)} TRUNCATED")
         if self.failed:
@@ -79,7 +128,9 @@ def _parent_id(obj: dict) -> str | None:
     return None
 
 
-def _vault_path(obj_id: str, index: dict[str, dict], notion_dir: Path) -> Path:
+def _vault_path(
+    obj_id: str, index: dict[str, dict], notion_dir: Path, id_chars: int = 8
+) -> Path:
     """Mirror Notion's nesting as directories.
 
     Grep results are far more useful when the path says where a page lived.
@@ -95,9 +146,39 @@ def _vault_path(obj_id: str, index: dict[str, dict], notion_dir: Path) -> Path:
         current = _parent_id(index[current])
 
     parts.reverse()
-    # Short id suffix guarantees uniqueness when two siblings share a title.
-    stem = f"{parts[-1] if parts else 'untitled'}-{obj_id[:8]}"
+    # The id suffix is taken from the END of the id. Notion ids in a single
+    # workspace share a long leading run - every page here began '28b7c599' or
+    # '3e17c599' - so a prefix is close to useless for telling them apart.
+    stem = f"{parts[-1] if parts else 'untitled'}-{obj_id[-id_chars:]}"
     return notion_dir.joinpath(*parts[:-1], f"{stem}.md")
+
+
+def assign_paths(index: dict[str, dict], notion_dir: Path) -> dict[str, Path]:
+    """Map every page id to a unique vault path.
+
+    Uniqueness is guaranteed structurally rather than hoped for. A page silently
+    overwriting another is the worst failure this module can have: the sync
+    reports success, and knowledge quietly disappears from the vault. Colliding
+    pages get progressively more of their id until they separate.
+    """
+    paths: dict[str, Path] = {}
+    claimed: dict[str, str] = {}  # lowercased path -> page id that holds it
+
+    for obj_id in sorted(index):  # sorted so results are reproducible
+        for id_chars in (8, 12, 16, 24, 32):
+            candidate = _vault_path(obj_id, index, notion_dir, id_chars=id_chars)
+            # Windows and macOS are case-insensitive; two paths differing only
+            # in case would still collide on disk.
+            key = str(candidate).lower()
+            if key not in claimed:
+                claimed[key] = obj_id
+                paths[obj_id] = candidate
+                break
+        else:
+            # Two identical full ids is impossible, so this cannot be reached.
+            raise RuntimeError(f"could not find a unique path for page {obj_id}")
+
+    return paths
 
 
 def _frontmatter(obj: dict, path_hint: str, truncated: bool, unknown: list[str]) -> str:
@@ -138,10 +219,11 @@ def sync(settings: Settings, force: bool = False) -> SyncStats:
 
         stats.scanned = len(index)
         live_ids: set[str] = set()
+        paths = assign_paths(index, notion_dir)
 
         for obj_id, obj in index.items():
             live_ids.add(obj_id)
-            path = _vault_path(obj_id, index, notion_dir)
+            path = paths[obj_id]
             last_edited = obj.get("last_edited_time", "")
 
             row = conn.execute(
@@ -175,6 +257,10 @@ def sync(settings: Settings, force: bool = False) -> SyncStats:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(body, encoding="utf-8")
             stats.written += 1
+            if not content.markdown.strip():
+                # Legitimate for a genuinely blank Notion page, but a large
+                # count means the content is not being read at all.
+                stats.empty.append(_object_title(obj))
             if content.truncated:
                 stats.truncated.append(_object_title(obj))
 
