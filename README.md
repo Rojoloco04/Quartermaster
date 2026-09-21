@@ -43,6 +43,17 @@ cp .env.example .env          # then fill it in
 ./.venv/Scripts/qm.exe sync   # pull Notion
 ```
 
+Enable the commit guard once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+It scans staged content for credentials and personal identifiers and blocks the
+commit. This repo is public and git history is permanent, so the guard exists
+rather than relying on anyone remembering. Personal content belongs in the
+private vault repo. Override a single commit with `git commit --no-verify`.
+
 `qm doctor` is the first thing to run when anything misbehaves. It checks the
 vault, the Claude CLI, your auth, and which secrets are set.
 
