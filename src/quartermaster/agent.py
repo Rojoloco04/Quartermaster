@@ -71,6 +71,11 @@ class Profile:
 
     name: str
     cwd: Path
+    # The base set the model is given at all. This is the containment lever:
+    # `allowed_tools` only pre-approves, it does NOT control availability, so a
+    # profile with allowed_tools=[] still had the full Claude Code toolset in
+    # context and reachable. An empty `tools` removes the built-ins entirely.
+    tools: list[str] = field(default_factory=list)
     allowed_tools: list[str] = field(default_factory=list)
     share_session: bool = False
     system_append: str = ""
@@ -84,6 +89,7 @@ def owner_profile(settings: Settings) -> Profile:
     return Profile(
         name="owner",
         cwd=settings.vault,
+        tools=VAULT_TOOLS + RESEARCH_TOOLS,
         allowed_tools=VAULT_TOOLS + RESEARCH_TOOLS,
         share_session=True,
         system_append=DISCORD_STYLE,
@@ -101,7 +107,8 @@ def public_profile(settings: Settings) -> Profile:
     return Profile(
         name="public",
         cwd=settings.public_workspace,
-        allowed_tools=[],  # nothing yet, by design
+        tools=[],  # no built-ins at all
+        allowed_tools=[],
         share_session=False,
         system_append=(
             DISCORD_STYLE
@@ -126,6 +133,7 @@ def parser_profile(settings: Settings, schema: dict) -> Profile:
     return Profile(
         name="parser",
         cwd=settings.public_workspace,
+        tools=[],  # it reads a request and emits JSON; it needs nothing else
         allowed_tools=[],
         share_session=False,
         max_turns=1,
@@ -136,6 +144,7 @@ def parser_profile(settings: Settings, schema: dict) -> Profile:
 @dataclass
 class Reply:
     text: str
+    structured: dict | None = None
     session_id: str | None = None
     cost_usd: float | None = None
     error: str | None = None
@@ -166,6 +175,7 @@ def _options(profile: Profile, cli_path: str | None = None) -> ClaudeAgentOption
             "preset": "claude_code",
             **({"append": profile.system_append} if profile.system_append else {}),
         },
+        tools=profile.tools,
         allowed_tools=profile.allowed_tools,
         disallowed_tools=NEVER_OVER_CHAT,
         permission_mode="acceptEdits",
@@ -193,8 +203,14 @@ async def ask(prompt: str, profile: Profile, cli_path: str | None = None) -> Rep
     chunks: list[str] = []
     session_id: str | None = None
     cost: float | None = None
+    structured: dict | None = None
+    error: str | None = None
 
     try:
+        # Drain the stream to completion rather than returning from inside it.
+        # Returning early leaves the SDK's async generator suspended and closing
+        # it then raises "aclose(): asynchronous generator is already running" -
+        # once per call, on a path that runs on every moderation request.
         async for message in query(prompt=prompt, options=_options(profile, cli_path)):
             if isinstance(message, AssistantMessage):
                 for block in message.content:
@@ -203,18 +219,25 @@ async def ask(prompt: str, profile: Profile, cli_path: str | None = None) -> Rep
             elif isinstance(message, ResultMessage):
                 session_id = message.session_id
                 cost = getattr(message, "total_cost_usd", None)
+                # With output_format set the model answers through a
+                # StructuredOutput tool call and no TextBlock is ever emitted,
+                # so the payload appears only here.
+                candidate = getattr(message, "structured_output", None)
+                if isinstance(candidate, dict):
+                    structured = candidate
                 if message.subtype != "success":
-                    return Reply(
-                        text="".join(chunks).strip(),
-                        session_id=session_id,
-                        cost_usd=cost,
-                        error=_explain(message.subtype),
-                    )
+                    error = _explain(message.subtype)
     except Exception as exc:  # noqa: BLE001 - surfaces must report, not crash
         log.exception("agent query failed (profile=%s)", profile.name)
         return Reply(text="".join(chunks).strip(), error=f"{type(exc).__name__}: {exc}")
 
-    return Reply(text="".join(chunks).strip(), session_id=session_id, cost_usd=cost)
+    return Reply(
+        text="".join(chunks).strip(),
+        structured=structured,
+        session_id=session_id,
+        cost_usd=cost,
+        error=error,
+    )
 
 
 def _explain(subtype: str) -> str:

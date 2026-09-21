@@ -16,6 +16,7 @@ a person then declines.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -73,13 +74,21 @@ async def parse_request(settings: Settings, request: str) -> tuple[OpsPlan | Non
     reply = await agent.ask(prompt, profile, settings.claude_cli)
     if reply.error:
         return None, reply.error
-    if not reply.text.strip():
+
+    # Structured output arrives on the result, not as text. Fall back to parsing
+    # text only if the schema path produced nothing.
+    if reply.structured is not None:
+        payload = json.dumps(reply.structured)
+    elif reply.text.strip():
+        payload = reply.text
+    else:
+        log.warning("parser returned neither structured output nor text")
         return None, "I couldn't work out what you wanted."
 
     try:
-        return OpsPlan.from_json(reply.text), ""
+        return OpsPlan.from_json(payload), ""
     except (ValueError, KeyError) as exc:
-        log.warning("unparseable plan: %s", reply.text[:300])
+        log.warning("unparseable plan: %s", payload[:300])
         return None, f"I couldn't turn that into an action ({exc})."
 
 

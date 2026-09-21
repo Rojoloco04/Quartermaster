@@ -46,6 +46,17 @@ class TestContainment:
         pub = public_profile(settings)
         for tool in ("Read", "Write", "Edit", "Grep", "Glob"):
             assert tool not in pub.allowed_tools
+            assert tool not in pub.tools
+
+    def test_public_profile_is_given_no_builtin_tools_at_all(self, settings: Settings):
+        """Regression: allowed_tools only pre-approves, it does not restrict.
+
+        A profile with allowed_tools=[] still received the entire Claude Code
+        toolset - Read, Edit, Glob, Grep, Task and the rest - reachable subject
+        only to permission prompts. Containment has to come from `tools`.
+        """
+        opts = _options(public_profile(settings))
+        assert opts.tools == [], "an empty base tool set is what actually removes them"
 
     def test_public_profile_is_off_by_default(self, settings: Settings):
         assert public_profile(settings).enabled is False
