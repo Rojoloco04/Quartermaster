@@ -1,0 +1,142 @@
+#!/usr/bin/env python
+"""Block commits that would leak secrets or personal details into a public repo.
+
+This exists so nobody has to remember. It runs on every commit and inspects
+only what is *staged*, so an ignored .env or an untracked scratch file can't
+trip it.
+
+Two classes of finding:
+
+  SECRET — a credential shape. Always blocks. There is no legitimate reason for
+           one of these to be in source, and a pushed secret is compromised even
+           if you delete it a minute later: it is in the reflog, in any fork,
+           and quite possibly in a scraper's database already.
+
+  PII    — a personal identifier. Blocks by default, because this repo is
+           public and git history is permanent. Personal content belongs in the
+           private vault repo, not here.
+
+To override once, when you genuinely mean it:  git commit --no-verify
+"""
+
+from __future__ import annotations
+
+import re
+import subprocess
+import sys
+
+# Credential shapes. Kept deliberately specific: a rule that fires constantly
+# gets disabled, and a disabled rule protects nothing.
+SECRET_PATTERNS: list[tuple[str, re.Pattern]] = [
+    ("Anthropic API key", re.compile(r"sk-ant-[A-Za-z0-9_\-]{20,}")),
+    ("Anthropic OAuth token", re.compile(r"sk-ant-oat\d*-[A-Za-z0-9_\-]{20,}")),
+    ("GitHub token", re.compile(r"gh[pousr]_[A-Za-z0-9]{36,}")),
+    ("Notion integration token", re.compile(r"\b(?:ntn_|secret_)[A-Za-z0-9]{40,}")),
+    ("Discord bot token", re.compile(r"\b[MNO][A-Za-z\d_-]{23,}\.[A-Za-z\d_-]{6}\.[A-Za-z\d_-]{27,}")),
+    ("Google OAuth client secret", re.compile(r"GOCSPX-[A-Za-z0-9_\-]{20,}")),
+    ("Slack token", re.compile(r"xox[baprs]-[A-Za-z0-9\-]{10,}")),
+    ("Private key block", re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |PGP )?PRIVATE KEY-----")),
+    ("AWS access key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+]
+
+# Personal identifiers. Everything here is fine in the private vault repo and
+# wrong in a public one.
+PII_PATTERNS: list[tuple[str, re.Pattern]] = [
+    ("Real name", re.compile(r"\bJack(?:'s)?\b|\bParrack\b", re.I)),
+    ("GitHub handle", re.compile(r"\bRojoloco04\b", re.I)),
+    ("Personal email", re.compile(r"\bparrackjack@\S+", re.I)),
+    ("Windows user path", re.compile(r"[Cc]:\\+Users\\+(?!you\b|USERNAME\b)[A-Za-z0-9._-]+")),
+    ("Home directory path", re.compile(r"/(?:home|Users)/(?!you\b|USERNAME\b)[a-z0-9._-]+/", re.I)),
+]
+
+# Files where a pattern is the point rather than a mistake.
+EXEMPT_SUFFIXES = (".githooks/pre-commit",)
+
+BINARY_SUFFIXES = (
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".zip", ".gz",
+    ".db", ".sqlite", ".sqlite3", ".ico", ".woff", ".woff2", ".ttf",
+)
+
+
+def staged_files() -> list[str]:
+    out = subprocess.run(
+        ["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"],
+        capture_output=True, text=True, check=False,
+    ).stdout
+    return [line.strip() for line in out.splitlines() if line.strip()]
+
+
+def staged_content(path: str) -> str:
+    result = subprocess.run(
+        ["git", "show", f":{path}"], capture_output=True, check=False
+    )
+    return result.stdout.decode("utf-8", errors="replace")
+
+
+def main() -> int:
+    findings: list[tuple[str, str, str, int, str]] = []
+
+    for path in staged_files():
+        norm = path.replace("\\", "/")
+
+        # A .env should never be committed regardless of contents.
+        if norm == ".env" or norm.endswith("/.env"):
+            findings.append(("SECRET", path, "Environment file", 0, path))
+            continue
+
+        if norm.endswith(BINARY_SUFFIXES) or norm.endswith(EXEMPT_SUFFIXES):
+            continue
+
+        content = staged_content(path)
+        if "\0" in content[:4096]:
+            continue
+
+        for lineno, line in enumerate(content.splitlines(), start=1):
+            for label, pattern in SECRET_PATTERNS:
+                if pattern.search(line):
+                    findings.append(("SECRET", path, label, lineno, line.strip()[:100]))
+            for label, pattern in PII_PATTERNS:
+                if pattern.search(line):
+                    findings.append(("PII", path, label, lineno, line.strip()[:100]))
+
+    if not findings:
+        return 0
+
+    secrets = [f for f in findings if f[0] == "SECRET"]
+    pii = [f for f in findings if f[0] == "PII"]
+
+    print("\n  Commit blocked.\n", file=sys.stderr)
+
+    if secrets:
+        print("  Credentials found in staged changes:", file=sys.stderr)
+        for _, path, label, lineno, snippet in secrets:
+            where = f"{path}:{lineno}" if lineno else path
+            print(f"    {where}  [{label}]", file=sys.stderr)
+            if snippet and lineno:
+                print(f"      {snippet}", file=sys.stderr)
+        print(
+            "\n  Remove these before committing. If one was ever pushed, treat it as\n"
+            "  compromised and rotate it - deleting the commit does not help.\n",
+            file=sys.stderr,
+        )
+
+    if pii:
+        print("  Personal identifiers found (this repo is public):", file=sys.stderr)
+        for _, path, label, lineno, snippet in pii:
+            print(f"    {path}:{lineno}  [{label}]", file=sys.stderr)
+            print(f"      {snippet}", file=sys.stderr)
+        print(
+            "\n  Personal content belongs in the private vault repo. Use a generic\n"
+            "  placeholder here: 'you', '~/Vault', 'C:\\\\Users\\\\you\\\\Vault'.\n",
+            file=sys.stderr,
+        )
+
+    print("  Override once with:  git commit --no-verify\n", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    # A UnicodeEncodeError here would hide the very finding we are reporting.
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(errors="replace")
+    sys.exit(main())
