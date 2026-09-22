@@ -10,6 +10,7 @@ import argparse
 import importlib
 import logging
 import logging.handlers
+import os
 import shutil
 import subprocess
 import sys
@@ -270,17 +271,55 @@ def cmd_sync(args: argparse.Namespace) -> int:
     return 1 if stats.failed else 0
 
 
+def _only_instance(settings, name: str):
+    """This process's hold on ``<name>.lock``, or None (and says so) if another
+    ``qm <name>`` already runs. Two connected bots double-reply."""
+    from . import procs
+
+    lock = procs.instance_lock(settings.log_path.parent, name)
+    if lock is None:
+        log.warning("another qm %s is already running; not starting a second", name)
+        print(f"qm {name} is already running (qm restart restarts it, qm quit stops it).")
+    return lock
+
+
 def cmd_bot(args: argparse.Namespace) -> int:
     from .surfaces.discord_bot import run
 
-    return run(load_settings())
+    settings = load_settings()
+    if not (lock := _only_instance(settings, "bot")):
+        return 1
+    try:
+        return run(settings)
+    finally:
+        lock.release()
 
 
 def cmd_web(args: argparse.Namespace) -> int:
     from .surfaces.web import serve
 
-    print(f"Dashboard at http://{args.host}:{args.port}/  (Ctrl+C to stop)")
-    return serve(load_settings(), host=args.host, port=args.port)
+    settings = load_settings()
+    if not (lock := _only_instance(settings, "web")):
+        return 1
+    try:
+        print(f"Dashboard at http://{args.host}:{args.port}/  (Ctrl+C to stop)")
+        return serve(settings, host=args.host, port=args.port)
+    finally:
+        lock.release()
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    from . import procs
+
+    settings = load_settings()
+    if not (lock := _only_instance(settings, "serve")):
+        return 1
+    log.info("supervisor starting bot and web")
+    try:
+        procs.Supervisor(procs.RESTARTED, settings.log_path.parent).run()
+    finally:
+        lock.release()
+    return 0
 
 
 def _run_job(name: str, job, dry_run: bool, sent: str) -> int:
@@ -377,7 +416,8 @@ def cmd_schedule(args: argparse.Namespace) -> int:
         for line in schedule.install(settings, digest_cadence=args.digest_cadence):
             print(f"Scheduled: {line}")
         print(
-            f"\nNotion sync: daily at {schedule.SYNC_HOUR:02d}:00. Digest: {args.digest_cadence}. "
+            f"\nBot + web: started at logon and kept running ({schedule.SERVICE_TASK}; qm restart starts it now). "
+            f"Notion sync: daily at {schedule.SYNC_HOUR:02d}:00. Digest: {args.digest_cadence}. "
             f"Presale check: daily at {schedule.PRESALE_HOUR:02d}:00."
         )
     elif args.action == "remove":
@@ -439,6 +479,10 @@ def main(argv: list[str] | None = None) -> int:
     # Windows consoles default to cp1252, which can't encode most of what a
     # model writes (em dashes, curly quotes, ...). Without this, `qm digest`
     # crashes on its own output the first time the prose isn't pure ASCII.
+    # Under pythonw (the logon task) there is no console: both are None.
+    if sys.stdout is None or sys.stderr is None:
+        devnull = open(os.devnull, "w", encoding="utf-8")
+        sys.stdout, sys.stderr = sys.stdout or devnull, sys.stderr or devnull
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
@@ -462,6 +506,8 @@ def main(argv: list[str] | None = None) -> int:
     p_sync.set_defaults(func=cmd_sync)
 
     sub.add_parser("bot", help="run the Discord bot").set_defaults(func=cmd_bot)
+    sub.add_parser("serve", help="run bot + web, restarting them if they exit (the logon task runs this)").set_defaults(
+        func=cmd_serve)
 
     p_web = sub.add_parser("web", help="local dashboard: bot status, jobs, turns, live log, guide")
     p_web.add_argument("--host", default="127.0.0.1", help="non-localhost requires QM_WEB_TOKEN")

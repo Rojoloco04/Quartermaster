@@ -109,14 +109,18 @@ targets exactly that message.
 
 ## Running it
 
-- `qm quit` (or `qm stop`) stops everything: the bot, the dashboard and any job
-  mid-run. Then `qm bot` starts the bot again: two running bots double-reply.
-- `qm restart` stops the bot and dashboard and starts both again in the
-  background (no terminal needed; closing the terminal doesn't stop them). A
-  job mid-run is left alone. Their console output goes to `bot.out` / `web.out`
-  next to the log.
-- `qm schedule install --digest-cadence daily` (or `weekly`) registers the Notion
-  sync (07:00), knowledge reconcile (07:30), presale check (08:00) and digest.
+- The bot and dashboard start on their own when you log in, with no window,
+  and come back if either crashes (the `Quartermaster Service` task runs
+  `qm serve`, which watches both). Only one bot can run at a time: a second
+  `qm bot` says one is already running and exits.
+- `qm restart` restarts the bot and dashboard, e.g. after a code change. A job
+  mid-run is left alone. Their console output goes to `bot.out` / `web.out`
+  next to the log; the log says when the supervisor restarted one and why.
+- `qm quit` (or `qm stop`) stops everything: the bot, the dashboard, the
+  supervisor and any job mid-run. They stay stopped until `qm restart` or your
+  next logon.
+- `qm schedule install --digest-cadence daily` (or `weekly`) registers the
+  service (at logon), the Notion sync (07:00), knowledge reconcile (07:30), presale check (08:00) and digest.
   `qm schedule status` shows them.
 - `qm reconcile` checks what Quartermaster knows against itself and Notion:
   it merges duplicates, drops plans whose date has passed, and DMs you a

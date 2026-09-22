@@ -25,14 +25,16 @@ Still open from Phase 4:
 
 ## Phase 5 — Infra
 
-- **Service registration** so the bot survives reboot — and so instances stop
-  stacking. Today, restarting by hand can leave two bots connected, which
-  double-replies. This is the real fix.
+- ~~**Service registration**~~ — done 2026-09-22: a logon task runs the
+  `qm serve` supervisor windowless, and each of bot/web/serve holds a lock so a
+  second copy can't start. Native, not Docker: a containerised bot would split
+  the shared session and needs its own Linux login (revisit for a sandbox or a
+  move to a server).
 - **Scheduled push** of the vault to its private remote.
 - **restic** nightly to a second drive, **with a verified test restore**.
 - **Uptime Kuma** watching the bot and the scheduled jobs.
 - **Tailscale**; no router port forwarding.
-- Needs **WSL2 + Docker**, neither of which is installed yet.
+- Uptime Kuma needs **WSL2 + Docker**, neither of which is installed yet.
 
 *Done when:* the vault can be destroyed and restored from the remote with nothing
 lost.

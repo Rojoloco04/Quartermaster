@@ -4,11 +4,14 @@ What exists and why. The rules here are binding: read this before changing
 anything. `docs/GUIDE.md` is how to use it (also served by `qm web`);
 `docs/ROADMAP.md` is what's planned and what was rejected.
 
-State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 310 tests.
+State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) under way: service wrapper done. 316 tests.
 
 **Open right now**
-- Phase 5 infra: a service wrapper (restarting by hand leaves stale instances),
-  scheduled vault push, restic + a verified restore, Uptime Kuma, Tailscale.
+- Phase 5 infra: the service wrapper is done (2026-09-22). Left: scheduled vault
+  push, restic + a verified restore, Uptime Kuma (WSL2 + Docker, neither
+  installed yet), Tailscale. Only the side services go in Docker: the bot stays
+  native (a Linux container would split the shared session, whose folder is
+  named after the vault's Windows path, and would need `procs`/`schedule` redone).
 - Last.fm is configured but the account started 2026-09-22 with 0 scrobbles, so
   it adds nothing until Spotify scrobbling fills it. Spotify stays until then
   (queued: remove it once Last.fm can replace it).
@@ -97,7 +100,7 @@ is enabled per clone with `git config core.hooksPath .githooks`.
 
 ```
 src/quartermaster/
-├── cli.py            qm doctor/init/sync/bot/web/digest/presale-check/reconcile/quit/restart/schedule/mute/auth/mcp
+├── cli.py            qm doctor/init/sync/bot/web/serve/digest/presale-check/reconcile/quit/restart/schedule/mute/auth/mcp
 ├── config.py         secrets from .env, preferences from the vault's 90-System/config.toml
 ├── agent.py          Agent SDK wrapper; Profile + check_tool are the security boundary
 ├── db.py             state.db — machine state only, rebuildable
@@ -108,7 +111,7 @@ src/quartermaster/
 ├── claude_tidy.py    weekly: propose a Claude page with the stale parts removed
 ├── reconcile.py      daily: dedupe/tidy facts + lessons, write and DM conflicts
 ├── lessons.py        facts/lessons.md: corrections, read into every owner turn and digest
-├── procs.py          `qm quit`/`restart`: find and kill Quartermaster process trees
+├── procs.py          `qm quit`/`restart`, the `qm serve` supervisor, the one-instance locks
 ├── schedule.py       Windows Task Scheduler wiring (schtasks.exe)
 ├── discord_ops.py    OpsPlan, permissions, hierarchy, matching (pure, well-tested)
 ├── integrations/     google, microsoft, spotify (OAuth; shared accounts.py),
@@ -128,25 +131,42 @@ vault-template/       copied into a new vault by `qm init`
 ```bash
 ./.venv/Scripts/qm.exe doctor              # first thing when anything misbehaves
 ./.venv/Scripts/qm.exe quit                # stop everything (bot, web, running jobs); alias `stop`
-./.venv/Scripts/qm.exe bot                 # run the bot (quit the old one first!)
-./.venv/Scripts/qm.exe restart             # stop bot + web, start both detached (jobs untouched)
+./.venv/Scripts/qm.exe restart             # restart bot + web (through the logon task; jobs untouched)
+./.venv/Scripts/qm.exe bot                 # foreground bot, for debugging (refused while one runs)
 ./.venv/Scripts/qm.exe reconcile --dry-run # what the daily knowledge check would change and ask
 ./.venv/Scripts/qm.exe digest --dry-run    # preview the digest; also presale-check --dry-run
 ./.venv/Scripts/qm.exe schedule install --digest-cadence daily   # or weekly
 ./.venv/Scripts/python.exe -m pytest tests/ -q
 ```
 
-**Stop the bot before restarting it** (`qm quit`): there's no service wrapper
-yet, and two connected instances double-reply. `procs.ours` matches qm.exe and
+**The service.** The `Quartermaster Service` logon task (30s after logon)
+runs `pythonw -m quartermaster.cli serve`: no console window. `qm serve` is a
+supervisor (`procs.Supervisor`) that runs `qm bot` and `qm web` as children and
+restarts one that exits after 5s, doubling to 5 min while it keeps dying young,
+reset after 10 min healthy. The task is registered from XML (`schedule.service_xml`)
+because `schtasks` flags can't set what it needs: no execution time limit (the
+default kills a task after 72h), keep running on battery, ignore a second start.
+No admin needed. `qm restart` with the task registered kills serve/bot/web and
+`schtasks /run`s it, then waits up to 20s for both children (the task, pythonw
+and two launchers are slow). `qm quit` stops the supervisor too; it stays down
+until `qm restart` or the next logon.
+
+**One instance each, whatever starts it.** `qm bot`, `qm web` and `qm serve`
+each hold `<name>.lock` beside the log (an OS lock, released when the process
+dies); a second copy says so and exits 1. Two connected bots double-reply, and
+this is what actually prevents it. Live-verified 2026-09-22: a killed bot came
+back via the supervisor, and a manual `qm bot` started in the supervisor's
+retry gap won the lock while the supervisor's copies were refused and backed
+off. `procs.ours` matches qm.exe and
 python running `qm.exe`/`quartermaster.cli` only: matching "quartermaster"
 anywhere once killed VS Code's language servers (they run on this venv).
-`qm restart` kills only processes whose qm subcommand is `bot`/`web`, starts
+Without the task, `qm restart` kills only processes whose qm subcommand is `bot`/`web`, starts
 both with `CREATE_NO_WINDOW` (`DETACHED_PROCESS` opened a blank console per
 process: qm.exe's python child allocates its own) (+ breakaway from the terminal's job when allowed)
 and output to `bot.out`/`web.out` beside the log, and reports FAILED with that
 output's tail if one exits within 4s. Live-verified 2026-09-22.
 
-**Scheduled tasks** (logged-in only): Notion sync 07:00 daily, reconcile 07:30
+**Scheduled tasks** (logged-in only): the service at logon, Notion sync 07:00 daily, reconcile 07:30
 daily, presale check 08:00 daily, Claude page tidy Sundays 09:00, digest at
 `digest.hour` daily or weekly. Re-run `qm schedule
 install` after changing `schedule.py` — the sync task only exists once it has

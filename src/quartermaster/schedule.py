@@ -1,26 +1,35 @@
-"""Windows Task Scheduler wiring for the Notion sync, digest and presale check.
+"""Windows Task Scheduler wiring: the timed jobs, and the service.
 
-Plain ``schtasks.exe`` - no new dependency, and none of Phase 5's
-Docker/service-wrapper work is needed just to get two commands to fire on a
-timer (three, now). Runs only while the owner is logged in (no stored credential for
-running logged-off - that's a bigger, separate decision).
+Plain ``schtasks.exe``, no new dependency. Everything runs only while the owner
+is logged in (no stored credential for running logged-off): the Claude login
+and the OAuth tokens live in the owner's profile anyway.
+
+The service is a logon task running ``qm serve`` (the supervisor in
+``procs``) through pythonw, so there is no console window. It is registered
+from XML because ``schtasks /create`` flags can't express what it needs: no
+execution time limit (the default kills a task after 72 hours), keep running
+on battery, and ignore a second start while one is running.
 """
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from xml.sax.saxutils import escape
 
-from .config import Settings
+from .config import REPO_ROOT, Settings
 
 SYNC_TASK = "Quartermaster Notion Sync"
 TIDY_TASK = "Quartermaster Claude Page Tidy"
 DIGEST_TASK = "Quartermaster Digest"
 PRESALE_TASK = "Quartermaster Presale Check"
 RECONCILE_TASK = "Quartermaster Reconcile"
-TASKS = (SYNC_TASK, TIDY_TASK, DIGEST_TASK, PRESALE_TASK, RECONCILE_TASK)
+SERVICE_TASK = "Quartermaster Service"
+TASKS = (SERVICE_TASK, SYNC_TASK, TIDY_TASK, DIGEST_TASK, PRESALE_TASK, RECONCILE_TASK)
 
 # Before the presale check and the digest, so the stale-page scan reads a
 # mirror that is at most a day old.
@@ -80,10 +89,64 @@ def build_tasks(settings: Settings, digest_cadence: str) -> list[ScheduledTask]:
     ]
 
 
+def _user() -> str:
+    domain, name = os.environ.get("USERDOMAIN", ""), os.environ.get("USERNAME", "")
+    return f"{domain}\\{name}" if domain else name
+
+
+def service_xml(user: str, pythonw: str, workdir: str) -> str:
+    """The logon task that keeps the bot and dashboard running. Pure, for tests."""
+    u, exe, cwd = escape(user), escape(pythonw), escape(workdir)
+    return f"""<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo><Description>Quartermaster: runs the Discord bot and the dashboard (qm serve) and restarts them if they exit.</Description></RegistrationInfo>
+  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>{u}</UserId><Delay>PT30S</Delay></LogonTrigger></Triggers>
+  <Principals><Principal id="Author"><UserId>{u}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
+    <IdleSettings><StopOnIdleEnd>false</StopOnIdleEnd><RestartOnIdle>false</RestartOnIdle></IdleSettings>
+  </Settings>
+  <Actions Context="Author"><Exec><Command>{exe}</Command><Arguments>-m quartermaster.cli serve</Arguments><WorkingDirectory>{cwd}</WorkingDirectory></Exec></Actions>
+</Task>
+"""
+
+
+def install_service() -> str:
+    xml = service_xml(_user(), str(Path(sys.executable).with_name("pythonw.exe")), str(REPO_ROOT))
+    fd, path = tempfile.mkstemp(suffix=".xml")
+    os.close(fd)
+    try:
+        Path(path).write_text(xml, encoding="utf-16")  # schtasks wants UTF-16 with a BOM
+        cmd = ["schtasks", "/create", "/f", "/tn", SERVICE_TASK, "/xml", path]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"Couldn't register {SERVICE_TASK}: {(result.stderr or result.stdout).strip()}")
+    finally:
+        os.unlink(path)
+    return f"schtasks /create /f /tn \"{SERVICE_TASK}\" /xml <logon task: qm serve>"
+
+
+def service_installed() -> bool:
+    return subprocess.run(["schtasks", "/query", "/tn", SERVICE_TASK], capture_output=True, text=True).returncode == 0
+
+
+def run_service() -> None:
+    subprocess.run(["schtasks", "/run", "/tn", SERVICE_TASK], capture_output=True, text=True, check=True)
+
+
 def install(settings: Settings, digest_cadence: str = "weekly") -> list[str]:
     """Registers every task, overwriting any existing registration (`/f`).
     Returns the commands run, so the caller can show exactly what changed."""
-    run: list[str] = []
+    run: list[str] = [install_service()]
     for task in build_tasks(settings, digest_cadence):
         cmd = [
             "schtasks", "/create", "/f",
@@ -122,6 +185,8 @@ def task_info() -> list[dict]:
                     row[wanted[key.strip()]] = value.strip()
             if row["last_result"] == "267011":  # SCHED_S_TASK_HAS_NOT_RUN, with a 1999 placeholder date
                 row.update(last_run="never", last_result="")
+            elif row["last_result"] == "267009":  # SCHED_S_TASK_RUNNING: the service, normally
+                row["last_result"] = "running"
         rows.append(row)
     return rows
 

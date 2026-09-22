@@ -8,17 +8,29 @@ every python process running ``quartermaster``, then kills each tree
 process and its parents are never touched.
 
 ``qm restart`` stops only the bot and the dashboard (a scheduled job mid-run
-is left alone), then starts both again detached from the terminal.
+is left alone), then starts both again: through the logon task when it is
+registered (so the supervisor comes back too), else detached from the terminal.
+
+``qm serve`` is that supervisor: it runs the bot and the dashboard as children
+and restarts either one when it exits, backing off when one keeps crashing.
+The ``Quartermaster Service`` logon task starts it windowless (pythonw).
+Separately, ``qm bot`` and ``qm web`` each hold an OS lock for their whole run,
+so a second copy refuses to start however it was launched: two connected bots
+double-reply.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Callable
+
+log = logging.getLogger(__name__)
 
 
 def list_processes() -> list[dict]:
@@ -86,6 +98,16 @@ def quit_all(only: set[str] | None = None) -> list[str]:
 
 RESTARTED = ("bot", "web")
 STARTUP_GRACE = 4  # seconds a restarted process must survive to count as started
+SERVICE_GRACE = 20  # seconds to wait for the logon task to bring bot and web up
+
+
+def instance_lock(lock_dir: Path, name: str):
+    """Hold ``<name>.lock`` for this process's lifetime, or None if another
+    process already does. An OS lock: a process that dies releases it."""
+    from .surfaces.chat import TurnLock  # the same OS file lock, for a different job
+
+    lock = TurnLock(lock_dir / f"{name}.lock")
+    return lock if lock.acquire() else None
 
 
 def _qm() -> list[str]:
@@ -112,9 +134,88 @@ def start_detached(subcommand: str, out_path: Path) -> subprocess.Popen:
             return subprocess.Popen(_qm() + [subcommand], creationflags=flags, **kwargs)
 
 
+def _tail(path: Path, lines: int = 5) -> list[str]:
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-lines:]
+    except OSError:
+        return []
+
+
+def start_child(subcommand: str, out_path: Path) -> subprocess.Popen:
+    """``qm <subcommand>`` as the supervisor's child: no console, and not broken
+    away from its job, so ending the supervisor ends it too."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "wb") as out:
+        return subprocess.Popen(_qm() + [subcommand], creationflags=subprocess.CREATE_NO_WINDOW,
+                                stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT)
+
+
+class Supervisor:
+    """Keeps each child running. One that exits is started again after a delay
+    that doubles while it keeps dying young, and resets once it has run
+    ``HEALTHY`` seconds. Clock and starter are injectable for tests."""
+
+    FIRST_DELAY = 5
+    MAX_DELAY = 300
+    HEALTHY = 600
+
+    def __init__(self, names: tuple[str, ...], out_dir: Path,
+                 start: Callable[[str, Path], subprocess.Popen] = start_child,
+                 clock: Callable[[], float] = time.monotonic):
+        self.names, self.out_dir, self._start, self._clock = names, out_dir, start, clock
+        self.procs: dict[str, subprocess.Popen | None] = {n: None for n in names}
+        self.started: dict[str, float] = {}
+        self.due: dict[str, float] = {n: 0.0 for n in names}
+        self.delay: dict[str, float] = {n: 0.0 for n in names}
+
+    def step(self) -> None:
+        now = self._clock()
+        for name in self.names:
+            proc = self.procs[name]
+            if proc is not None:
+                code = proc.poll()
+                if code is None:
+                    if now - self.started[name] >= self.HEALTHY:
+                        self.delay[name] = 0.0
+                    continue
+                ran = now - self.started[name]
+                wait = self.FIRST_DELAY if ran >= self.HEALTHY else min(self.MAX_DELAY, max(self.FIRST_DELAY, self.delay[name] * 2))
+                self.delay[name], self.due[name], self.procs[name] = wait, now + wait, None
+                log.warning("%s exited with %s after %.0fs; restarting in %.0fs. Last output: %s",
+                            name, code, ran, wait, " | ".join(_tail(self.out_dir / f"{name}.out")) or "(none)")
+            if self.procs[name] is None and now >= self.due[name]:
+                self.procs[name] = self._start(name, self.out_dir / f"{name}.out")
+                self.started[name] = now
+                log.info("supervisor started %s (pid %s)", name, self.procs[name].pid)
+
+    def run(self, poll: float = 2.0) -> None:
+        while True:
+            self.step()
+            time.sleep(poll)
+
+
+def _running(names: tuple[str, ...]) -> dict[str, int]:
+    return {command(p): p["pid"] for p in list_processes() if ours(p) and command(p) in names}
+
+
 def restart(out_dir: Path) -> tuple[list[str], list[str], list[str]]:
     """Stop the bot and dashboard, start both again. Returns (stopped,
-    started, failed); a failed entry carries the tail of its output file."""
+    started, failed); a failed entry carries the tail of its output file.
+    With the logon task registered, the supervisor is restarted with them."""
+    from . import schedule
+
+    if schedule.service_installed():
+        stopped = quit_all({"serve", *RESTARTED})
+        schedule.run_service()
+        # The task, pythonw and two launchers take a few seconds to reach the children.
+        deadline = time.monotonic() + SERVICE_GRACE
+        while len(up := _running(RESTARTED)) < len(RESTARTED) and time.monotonic() < deadline:
+            time.sleep(1)
+        started = [f"{name} (pid {up[name]}, supervised)" for name in RESTARTED if name in up]
+        failed = [f"{name} isn't running:" + "".join(f"\n    {line}" for line in _tail(out_dir / f"{name}.out") or ["(no output)"])
+                  for name in RESTARTED if name not in up]
+        return stopped, started, failed
+
     stopped = quit_all(set(RESTARTED))
     running = {name: start_detached(name, out_dir / f"{name}.out") for name in RESTARTED}
     time.sleep(STARTUP_GRACE)

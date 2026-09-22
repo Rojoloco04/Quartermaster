@@ -57,3 +57,21 @@ class TestBuildTasks:
         assert sync.command[-1] == "sync"
         assert sync.schedule_args == ["/sc", "daily", "/st", f"{SYNC_HOUR:02d}:00"]
         assert SYNC_HOUR < PRESALE_HOUR
+
+
+def test_service_task_runs_windowless_forever_and_once():
+    import xml.etree.ElementTree as ET
+
+    from quartermaster.schedule import service_xml
+
+    xml = service_xml(r"DESK&TOP\you", r"C:\q\.venv\Scripts\pythonw.exe", r"C:\q")
+    ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
+    root = ET.fromstring(xml.split("?>", 1)[1])  # parses, with the user name escaped
+    assert root.find("t:Triggers/t:LogonTrigger/t:UserId", ns).text == r"DESK&TOP\you"
+    settings = root.find("t:Settings", ns)
+    assert settings.find("t:ExecutionTimeLimit", ns).text == "PT0S"  # the default kills it after 72h
+    assert settings.find("t:MultipleInstancesPolicy", ns).text == "IgnoreNew"
+    assert settings.find("t:StopIfGoingOnBatteries", ns).text == "false"
+    exec_ = root.find("t:Actions/t:Exec", ns)
+    assert exec_.find("t:Command", ns).text.endswith("pythonw.exe")
+    assert exec_.find("t:Arguments", ns).text == "-m quartermaster.cli serve"
