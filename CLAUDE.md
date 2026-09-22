@@ -4,21 +4,24 @@ What exists and why. The rules here are binding: read this before changing
 anything. `docs/GUIDE.md` is how to use it (also served by `qm web`);
 `docs/ROADMAP.md` is what's planned and what was rejected.
 
-State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) under way: service wrapper and vault push done. 389 tests.
+State as of 2026-09-22: Phases 1–5 done (Phase 5: service wrapper, daily vault
+push, Tailscale; restic and Uptime Kuma dropped; a fresh clone of the vault
+remote matched the local vault). Next: a Satisfactory server beside Minecraft
+(`integrations/game_servers.py`), then the Phase 6+ extensions. 389 tests.
 
 **Open right now**
-- Phase 5 infra: the service wrapper and the daily vault push are done
-  (2026-09-22); restic was dropped (the vault's git remote is its backup). Left:
-  Tailscale (piloting with a Minecraft server), Uptime Kuma (WSL2 + Docker,
-  neither installed yet; may not be worth it). Only the side services go in Docker: the bot stays
-  native (a Linux container would split the shared session, whose folder is
-  named after the vault's Windows path, and would need `procs`/`schedule` redone).
+- The bot stays native, not in Docker: a Linux container would split the shared
+  session (whose folder is named after the vault's Windows path) and would need
+  `procs`/`schedule` redone.
+- First unattended morning of the windowless jobs is 2026-09-23 (sync 07:00,
+  reconcile 07:30, presale 08:00); the sync and reconcile tasks had never fired
+  on schedule before. Check the dashboard's job results.
 - Last.fm is configured but the account started 2026-09-22 with 0 scrobbles, so
   it adds nothing until Spotify scrobbling fills it. Spotify stays until then
   (queued: remove it once Last.fm can replace it).
 - Not yet exercised live: `record_lesson` (correct the bot in a DM, check
-  `facts/lessons.md`), `update_event`/`delete_event` from a DM, `reconcile_knowledge`
-  from a DM, and Minecraft started from a DM since the WMI launch (a terminal
+  `facts/lessons.md`), `update_event` from a DM, and Minecraft started from a
+  DM since the WMI launch (a terminal
   `qm minecraft start` via WMI outlived its command and answered RCON,
   2026-09-22), plus joining over Tailscale and the channel link flow.
 
@@ -55,7 +58,9 @@ servers spared), a Notion sync removing 8 pages deleted in Notion,
 (`chat.fresh_after_minutes` 5 to 10, picked up without a restart), and a real
 `qm reconcile` whose DM'd conflict (had tickets for a match been bought?) was
 answered in plain words, fixed in `facts/plans.md` and cleared from
-`conflicts.md`.
+`conflicts.md`; `delete_event` and `reconcile_knowledge` from a DM; the
+Minecraft server over Tailscale, an in-game kick from a guild channel, and
+guild chat replies.
 
 ## Working here
 

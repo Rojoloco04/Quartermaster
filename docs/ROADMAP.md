@@ -9,8 +9,8 @@ what exists and why it looks the way it does, see `CLAUDE.md`.
 | 2 | Discord assistant + moderation | Done |
 | 3 | Integrations | Done |
 | 4 | Weekly digest | Done — running daily as a proof of concept |
-| 5 | Infra | **Next** |
-| 6–10 | Extensions | Planned |
+| 5 | Infra | Done 2026-09-22 — service, vault push, Tailscale; restore verified |
+| 6–10 | Extensions | **Next** |
 | — | Added after the original plan | See the end |
 
 Phases 1–4 are described as built in `CLAUDE.md`, including where the build
@@ -35,16 +35,23 @@ Still open from Phase 4:
 - ~~**restic** nightly to a second drive~~ — dropped 2026-09-22: the vault's git
   remote already keeps every version off this machine. What isn't in it is
   rebuildable (`state.db`) or re-creatable (`.env`, OAuth tokens: `qm auth`).
-- **Uptime Kuma** watching the bot and the scheduled jobs.
-- **Tailscale**; no router port forwarding.
-- Uptime Kuma needs **WSL2 + Docker**, neither of which is installed yet.
+- ~~**Tailscale**~~ — done 2026-09-22; no router port forwarding. First used
+  for the Minecraft server (firewall: port 25565 from 100.64.0.0/10 only).
+- ~~**Uptime Kuma**~~ — dropped 2026-09-22. It would run on the same PC it
+  watches, so it misses the main failure (the PC down), the supervisor already
+  restarts the bot, the dashboard shows its heartbeat, and it needed WSL2 +
+  Docker installed just for this. If an out-of-band alert is ever wanted, a
+  hosted dead-man's switch (healthchecks.io, the bot pinging it) covers the PC
+  being off too.
 
 *Done when:* the vault can be destroyed and restored from the remote with nothing
-lost.
+lost. **Verified 2026-09-22:** a fresh clone of the remote matched the local
+vault (same commit, all 87 files); only `state.db`, `.mcp.json` and the turn
+lock are left out, each rebuildable.
 
 ---
 
-## Extensions — after Phase 5
+## Extensions
 
 | Phase | What | Grouped because |
 | --- | --- | --- |
@@ -120,6 +127,9 @@ Streaming with NVENC hardware transcoding.
   of the vault, **weather** in the digest, **lessons** from corrections, an
   editable **settings** page and an **architecture** page in `qm web`, the daily
   **reconcile** of facts with conflicts put to the owner, and `qm quit`.
+- 2026-09-22: calendar edit/delete, reconcile on request from a DM, the
+  **Minecraft** server (DMs, op-gated guild control with in-game-proven links,
+  the **Servers** tab), and **chat** for friends who mention the bot.
 
 ### Planned
 
@@ -140,9 +150,10 @@ Streaming with NVENC hardware transcoding.
   nothing that moves money.
 - **Game servers for friends**, reachable over Tailscale. No port forwarding.
   Piloting with Minecraft (Paper) since 2026-09-22: `qm minecraft`, and the bot
-  starts/stops it and runs allow-listed commands over RCON. Satisfactory next,
-  once there's a separate server box (or on this PC: 32GB is enough for a
-  small save alongside the game).
+  starts/stops it and runs allow-listed commands over RCON. **Satisfactory
+  next**: a module in `integrations/` plus one line in `game_servers.GAMES`
+  (on this PC for now, 32GB is enough for a small save alongside the game;
+  a separate server box later).
 - **Persistent voice-mute timers.** "Mute for 30s" is scheduled in memory today, so a
   restart leaves the person muted. Move pending undos into `state.db`.
 
