@@ -32,6 +32,7 @@ import asyncio
 import logging
 import sys
 import uuid
+from contextlib import aclosing
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -453,35 +454,38 @@ async def ask(
         # an ordinary CancelledError at whatever await it's sitting on, the
         # same as any other task cancellation, rather than walking away and
         # leaving the generator suspended with nothing ever delivered to it.
-        async for message in query(prompt=prompt, options=_options(profile, prompt, cli_path)):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        chunks.append(block.text)
-                        await emit("text", block.text)
-                    elif isinstance(block, (ToolUseBlock, ServerToolUseBlock)):
-                        log.info("[%s] tool call: %s(%s)", turn_id, block.name, _trunc(block.input))
-                        await emit("tool", (block.name, block.input))
-            elif isinstance(message, UserMessage):
-                # Tool results are replayed back through the stream as a
-                # "user" turn - this is the only place a tool's outcome
-                # (including a failure the model then has to react to) shows
-                # up at all.
-                for block in message.content if isinstance(message.content, list) else []:
-                    if isinstance(block, (ToolResultBlock, ServerToolResultBlock)):
-                        status = "error" if getattr(block, "is_error", False) else "ok"
-                        log.info("[%s] tool result (%s): %s", turn_id, status, _trunc(block.content))
-            elif isinstance(message, ResultMessage):
-                session_id = message.session_id
-                cost = getattr(message, "total_cost_usd", None)
-                # With output_format set the model answers through a
-                # StructuredOutput tool call and no TextBlock is ever emitted,
-                # so the payload appears only here.
-                candidate = getattr(message, "structured_output", None)
-                if isinstance(candidate, dict):
-                    structured = candidate
-                if message.subtype != "success":
-                    error = _explain(message.subtype)
+        # aclosing: a cancelled turn (timeout, !stop) closes the SDK stream, and
+        # with it the CLI subprocess, now rather than whenever it is collected.
+        async with aclosing(query(prompt=prompt, options=_options(profile, prompt, cli_path))) as stream:
+            async for message in stream:
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            chunks.append(block.text)
+                            await emit("text", block.text)
+                        elif isinstance(block, (ToolUseBlock, ServerToolUseBlock)):
+                            log.info("[%s] tool call: %s(%s)", turn_id, block.name, _trunc(block.input))
+                            await emit("tool", (block.name, block.input))
+                elif isinstance(message, UserMessage):
+                    # Tool results are replayed back through the stream as a
+                    # "user" turn - this is the only place a tool's outcome
+                    # (including a failure the model then has to react to) shows
+                    # up at all.
+                    for block in message.content if isinstance(message.content, list) else []:
+                        if isinstance(block, (ToolResultBlock, ServerToolResultBlock)):
+                            status = "error" if getattr(block, "is_error", False) else "ok"
+                            log.info("[%s] tool result (%s): %s", turn_id, status, _trunc(block.content))
+                elif isinstance(message, ResultMessage):
+                    session_id = message.session_id
+                    cost = getattr(message, "total_cost_usd", None)
+                    # With output_format set the model answers through a
+                    # StructuredOutput tool call and no TextBlock is ever emitted,
+                    # so the payload appears only here.
+                    candidate = getattr(message, "structured_output", None)
+                    if isinstance(candidate, dict):
+                        structured = candidate
+                    if message.subtype != "success":
+                        error = _explain(message.subtype)
 
     try:
         await asyncio.wait_for(_drain(), timeout=profile.timeout_seconds)
@@ -497,6 +501,9 @@ async def ask(
                 "hanging. Try again; if it keeps happening, check https://status.claude.com/."
             ),
         )
+    except asyncio.CancelledError:
+        log.info("[%s] cancelled (profile=%s)", turn_id, profile.name)
+        raise
     except Exception as exc:  # noqa: BLE001 - surfaces must report, not crash
         log.exception("[%s] agent query failed (profile=%s)", turn_id, profile.name)
         return Reply(text="".join(chunks).strip(), error=f"{type(exc).__name__}: {exc}")

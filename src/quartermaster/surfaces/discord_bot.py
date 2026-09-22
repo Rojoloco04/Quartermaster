@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import replace
 from pathlib import PurePath
 from urllib.parse import urlparse
 
@@ -106,6 +107,8 @@ class Quartermaster(discord.Client):
         self.owner = agent.owner_profile(settings)
         self.public = agent.public_profile(settings)
         self._busy = asyncio.Lock()
+        self._turn: asyncio.Task | None = None  # the running owner/public turn, for !stop
+        self._fresh = False  # set by !new
 
     async def on_ready(self) -> None:
         # Logging rather than print: print() is block-buffered when stdout is a
@@ -184,29 +187,67 @@ class Quartermaster(discord.Client):
             await moderation.handle(self.settings, message, self.user, prompt)
             return
 
-        profile = self.owner if route == "owner" else self.public
+        # Commands are checked before the busy lock: !stop has to reach a turn
+        # that is still running.
+        if route == "owner" and await self.command(message.channel, prompt):
+            return
 
+        profile = self.owner if route == "owner" else self.public
+        if route == "owner" and self._fresh:
+            # One turn without continue_conversation starts a new session;
+            # every later turn continues the newest one, which is now this.
+            profile = replace(profile, share_session=False)
+            self._fresh = False
+        await self.run_turn(message.channel, prompt, profile)
+
+    async def command(self, channel: discord.abc.Messageable, text: str) -> bool:
+        """Owner DM commands. Returns True if ``text`` was one."""
+        word = text.strip().lower()
+        if word == "!stop":
+            if self._turn is not None and not self._turn.done():
+                self._turn.cancel()
+            else:
+                await channel.send("Nothing is running.")
+            return True
+        if word == "!new":
+            self._fresh = True
+            await channel.send(
+                "Your next message starts a fresh conversation. The old one is still "
+                "there: `claude --resume` in the vault lists it."
+            )
+            return True
+        return False
+
+    async def run_turn(self, channel: discord.abc.Messageable, prompt: str, profile: agent.Profile) -> None:
         # One turn at a time. Two concurrent turns would both resume the same
         # session and interleave, corrupting the shared thread.
         if self._busy.locked():
-            await message.channel.send("Still working on the last one - one sec.")
+            await channel.send("Still working on the last one - one sec. (`!stop` cancels it.)")
             return
 
-        async with self._busy, message.channel.typing():
-            status = LiveStatus(message.channel)
+        async with self._busy, channel.typing():
+            status = LiveStatus(channel)
             await status.start()
+            self._turn = asyncio.create_task(
+                agent.ask(prompt, profile, self.settings.claude_cli, on_progress=status.update)
+            )
             try:
-                reply = await agent.ask(prompt, profile, self.settings.claude_cli, on_progress=status.update)
+                reply = await self._turn
+            except asyncio.CancelledError:
+                if asyncio.current_task().cancelling():
+                    raise  # the bot itself is shutting down, not a !stop
+                log.info("turn stopped by the owner")
+                await channel.send("⏹️ Stopped.")
+                return
             finally:
+                self._turn = None
                 await status.done()
 
         if reply.error:
             # Say so rather than leaving a silence that looks like being ignored.
-            await message.channel.send(f"⚠️ {reply.error}")
+            await channel.send(f"⚠️ {reply.error}")
         elif not status.sent_text:
-            await message.channel.send(
-                "(I finished but produced no reply. That's a bug - tell me what you asked.)"
-            )
+            await channel.send("(I finished but produced no reply. That's a bug - tell me what you asked.)")
 
 
 def describe_tool(name: str, tool_input: dict) -> str:
