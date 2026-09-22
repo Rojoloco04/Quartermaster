@@ -49,6 +49,8 @@ DEFAULTS: dict = {
     "notion": {
         # A page must be untouched this long AND look unfinished to be called stale.
         "stale_after_days": 90,
+        # The one Notion page (and its sub-pages) the agent may write to.
+        "claude_page_id": "",
     },
     "wishlist": {
         # The Notion page id (from its URL) whose to-do/bulleted/bookmark

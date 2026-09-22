@@ -121,9 +121,11 @@ Streaming with NVENC hardware transcoding.
   subscription limits.
 - **Voice playback** — needs `PyNaCl` and ffmpeg. The bot currently logs a warning
   that voice is unsupported. Voice *moderation* already works; it is a different API.
-- **A Notion write path for the agent's own `claude` page.** Planned originally,
-  never built; today the agent can only propose changes in `pending.md`. If
-  added, scope it to that one page id in code, not by prompt.
+- **Restock tracker** for food and snacks: what's running low, with links only.
+- **A `/budget` command** in Discord. Links and summaries only: no bank logins,
+  nothing that moves money.
+- **Game servers for friends**, reachable over Tailscale (after Phase 5). No port
+  forwarding.
 - **Persistent voice-mute timers.** "Mute for 30s" is scheduled in memory today, so a
   restart leaves the person muted. Move pending undos into `state.db`.
 

@@ -51,3 +51,12 @@ def test_hand_written_content_survives(tmp_path: Path):
     assert "A note I typed myself." in path.read_text(encoding="utf-8")
     assert len(mutes.load(path)) == 2
 
+
+
+def test_kindless_mute_covers_every_kind_and_ignores_case():
+    # "Stop telling me about Tool" should silence the digest line AND the presale ping.
+    muted = [mutes.Mute(item_id="artist/tool", note="")]
+    assert mutes.is_muted("event:artist/Tool/e1", muted)
+    assert mutes.is_muted("presale:artist/Tool/e2", muted)
+    assert not mutes.is_muted("event:artist/Toolbox/e3", muted)
+    assert not mutes.is_muted("presale:artist/Tool", [mutes.Mute(item_id="event:artist/Tool", note="")])

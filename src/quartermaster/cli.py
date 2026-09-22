@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 from . import db, mutes
+from .agent import MCP_SERVERS
 from .config import REPO_ROOT, load_settings
 
 log = logging.getLogger("quartermaster.cli")
@@ -152,15 +153,15 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         problems += 1
 
     secrets = [
-        ("NOTION_TOKEN", settings.notion_token, "phase 1 - notion mirror"),
-        ("DISCORD_BOT_TOKEN", settings.discord_bot_token, "phase 2 - the bot"),
-        ("DISCORD_OWNER_ID", settings.discord_owner_id, "phase 2 - who the bot answers"),
-        ("GOOGLE_CLIENT_ID", settings.google_client_id, "phase 3 - calendar + gmail"),
-        ("GOOGLE_CLIENT_SECRET", settings.google_client_secret, "phase 3 - calendar + gmail"),
-        ("MS_CLIENT_ID", settings.microsoft_client_id, "phase 3 - to do"),
-        ("SPOTIFY_CLIENT_ID", settings.spotify_client_id, "phase 3 - taste signal"),
-        ("SPOTIFY_CLIENT_SECRET", settings.spotify_client_secret, "phase 3 - taste signal"),
-        ("TICKETMASTER_API_KEY", settings.ticketmaster_api_key, "phase 4 - events"),
+        ("NOTION_TOKEN", settings.notion_token, "notion mirror"),
+        ("DISCORD_BOT_TOKEN", settings.discord_bot_token, "the bot"),
+        ("DISCORD_OWNER_ID", settings.discord_owner_id, "who the bot answers"),
+        ("GOOGLE_CLIENT_ID", settings.google_client_id, "calendar + gmail"),
+        ("GOOGLE_CLIENT_SECRET", settings.google_client_secret, "calendar + gmail"),
+        ("MS_CLIENT_ID", settings.microsoft_client_id, "to do"),
+        ("SPOTIFY_CLIENT_ID", settings.spotify_client_id, "taste signal"),
+        ("SPOTIFY_CLIENT_SECRET", settings.spotify_client_secret, "taste signal"),
+        ("TICKETMASTER_API_KEY", settings.ticketmaster_api_key, "events"),
         ("KLIPY_API_KEY", settings.klipy_api_key, "optional - gif search"),
     ]
     print()
@@ -169,10 +170,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         state = "set" if value else f"not set ({why})"
         print(f"[{mark}] {name:<22} {state}")
 
-    wishlist_page = (settings.prefs.get("wishlist") or {}).get("page_id") or ""
-    mark = OK if wishlist_page else WARN
-    state = wishlist_page or "not set in config.toml (phase 4 - wishlist price checks)"
-    print(f"[{mark}] wishlist.page_id       {state}")
+    for key, why in (("wishlist.page_id", "wishlist price checks"), ("notion.claude_page_id", "agent's Notion page")):
+        section, name = key.split(".")
+        value = (settings.prefs.get(section) or {}).get(name) or ""
+        print(f"[{OK if value else WARN}] {key:<22} {value or f'not set in config.toml ({why})'}")
 
     for service in INTEGRATIONS:
         mod = importlib.import_module(f".integrations.{service}", __package__)
@@ -429,7 +430,7 @@ def main(argv: list[str] | None = None) -> int:
     p_auth.set_defaults(func=cmd_auth)
 
     p_mcp = sub.add_parser("mcp", help="run an MCP server over stdio (started by Claude, not you)")
-    p_mcp.add_argument("server", choices=INTEGRATIONS)
+    p_mcp.add_argument("server", choices=MCP_SERVERS)
     p_mcp.set_defaults(func=cmd_mcp)
 
     args = parser.parse_args(argv)

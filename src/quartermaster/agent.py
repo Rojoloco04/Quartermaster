@@ -65,6 +65,9 @@ VAULT_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "TodoWrite", "Skill"]
 RESEARCH_TOOLS = ["WebSearch", "WebFetch"]
 
 
+MCP_SERVERS = ("google", "microsoft", "spotify", "notion")
+
+
 def integration_servers() -> dict:
     """The owner's MCP servers, launched with this interpreter.
 
@@ -73,7 +76,7 @@ def integration_servers() -> dict:
     """
     return {
         name: {"type": "stdio", "command": sys.executable, "args": ["-m", "quartermaster.cli", "mcp", name]}
-        for name in ("google", "microsoft", "spotify")
+        for name in MCP_SERVERS
     }
 
 
@@ -108,6 +111,8 @@ DISCORD_STYLE = (
 OWNER_LIMITS = (
     "You can read and edit files in this vault only. Quartermaster's own code, "
     "its scheduled jobs and its .env live outside it and are beyond your reach. "
+    "In Notion you may write only to the Claude page and its sub-pages, using "
+    "the notion tools; everything else there is a proposal in pending.md. "
     "If asked to fix or change how Quartermaster itself behaves, say plainly "
     "that you can't, and describe the change for the owner to make in Claude "
     "Code. Never report a fix you did not make and verify."

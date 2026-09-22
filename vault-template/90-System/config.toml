@@ -33,6 +33,7 @@ window_days = 60          # how far ahead to look for events worth travelling to
 
 [notion]
 stale_after_days = 90     # must ALSO look unfinished to count as stale
+claude_page_id = ""       # the one Notion page (and sub-pages) the agent may write to
 
 [wishlist]
 # Paste the wishlist page's id here (from its Notion URL - the 32-char

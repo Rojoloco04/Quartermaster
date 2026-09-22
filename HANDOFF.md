@@ -3,7 +3,7 @@
 Written for: the next agent or developer picking this up cold. This file covers
 what exists and why; what's planned is in `docs/ROADMAP.md`.
 
-State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 214 tests.
+State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 219 tests.
 
 ## What this is
 
@@ -43,7 +43,7 @@ src/quartermaster/
 ├── schedule.py       Windows Task Scheduler wiring (schtasks.exe)
 ├── discord_ops.py    OpsPlan, permissions, hierarchy, matching (pure, well-tested)
 ├── integrations/     google, microsoft, spotify (OAuth; shared accounts.py),
-│                     notion (REST), ticketmaster, prices
+│                     notion (REST), claude_page (scoped writes), ticketmaster, prices
 ├── servers/          MCP servers over stdio (`qm mcp <name>`); shared helpers in __init__
 └── surfaces/         discord_bot (routing), moderation (preview/confirm/execute),
                       digest_send (one-shot DM for scheduled jobs)
@@ -86,7 +86,7 @@ pipe and vanished once already.
 | --- | --- | --- | --- | --- |
 | `cwd` | vault | outside it | outside it | vault |
 | `tools` | vault + research + Skill | `[]` | `[]` | `[]` |
-| MCP | google, microsoft, spotify | none | none | none |
+| MCP | google, microsoft, spotify, notion | none | none | none |
 | session | shared with CLI | separate | none | none |
 | enabled | yes | **no** | yes | yes |
 
@@ -140,6 +140,24 @@ throttled to respect Discord's edit rate limit.
 
 The owner agent can only edit the vault. `OWNER_LIMITS` tells it to say so when
 asked to fix Quartermaster itself — it once reported a fix it couldn't make.
+
+## Notion writes
+
+The agent writes to exactly one place in Notion: the page at
+`notion.claude_page_id` (config.toml) and its direct sub-pages, through the
+`notion` MCP server (`read_claude_page`, `append_to_claude_page`,
+`create_claude_subpage`). `integrations/claude_page.py` checks every target's
+parent in code before writing. Everything else in Notion is a proposal in
+`90-System/pending.md`. The Notion integration needs "Insert content".
+Live-verified: an out-of-scope write is refused before any request is sent.
+
+## Mutes
+
+`90-System/muted.md`, one `kind:key` per line, matching nested ids and ignoring
+case. A mute without a kind (`artist/Tool`) covers every kind, so "stop telling
+me about Tool" silences both the digest line and the presale ping. There is no
+"not interested" list anywhere else: `facts/interests.md` holds positives only
+(the presale matcher also ignores any "Not interested" heading, defensively).
 
 ## Session sharing
 
@@ -226,8 +244,6 @@ outside both repos.
 - Voice-mute durations live in memory — a restart leaves the person muted.
 - GIF search needs `KLIPY_API_KEY` (Tenor's API shut down 2026-06-30).
 - `qm init --force` would overwrite the vault's personalised CLAUDE.md.
-- The agent has no Notion write path at all (the original plan's writable
-  `claude` page was never built); changes are proposed in `pending.md`.
 
 ## Working agreements
 

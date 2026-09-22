@@ -195,8 +195,18 @@ def run_digest(settings: Settings, *, dry_run: bool = False) -> str:
 MAX_PRESALE_LINES = 10
 
 
+_NOT_INTERESTED = re.compile(r"^#+\s*not interested\b.*?(?=^#+\s|\Z)", re.IGNORECASE | re.MULTILINE | re.DOTALL)
+
+
+def positive_interests(text: str) -> str:
+    """interests.md minus its "Not interested" section. Naming a team there
+    ("no Blues games") must not make that team's presale match."""
+    return _NOT_INTERESTED.sub("", text)
+
+
 def _taste(settings: Settings) -> tuple[set[str], str]:
-    """(Spotify top artist names, facts/interests.md text), both lowercased."""
+    """(Spotify top artist names, the positive parts of facts/interests.md),
+    both lowercased."""
     names: set[str] = set()
     labels = spotify_accounts(settings)
     if labels:
@@ -204,7 +214,7 @@ def _taste(settings: Settings) -> tuple[set[str], str]:
             names = top_artist_names(settings, labels[0])
         except Exception as exc:  # noqa: BLE001 - interests.md still works alone
             log.warning("presale: spotify taste unavailable: %s", exc)
-    return names, _interests(settings).lower()
+    return names, positive_interests(_interests(settings)).lower()
 
 
 def matches_taste(event: dict, artists: set[str], interests: str) -> bool:

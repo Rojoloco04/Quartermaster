@@ -124,6 +124,22 @@ class NotionClient:
                 return
             cursor = data.get("next_cursor")
 
+    def retrieve_page(self, page_id: str) -> dict:
+        return self._request("GET", f"/pages/{page_id}")
+
+    def create_page(self, parent_id: str, title: str, markdown: str) -> dict:
+        return self._request("POST", "/pages", json={
+            "parent": {"page_id": parent_id},
+            "properties": {"title": {"title": [{"text": {"content": title[:200]}}]}},
+            "markdown": markdown,
+        })
+
+    def append_markdown(self, page_id: str, markdown: str) -> None:
+        self._request("PATCH", f"/pages/{page_id}/markdown", json={
+            "type": "insert_content",
+            "insert_content": {"content": markdown, "position": {"type": "end"}},
+        })
+
     def page_markdown(self, page_id: str) -> PageMarkdown:
         data = self._request("GET", f"/pages/{page_id}/markdown")
         return PageMarkdown(

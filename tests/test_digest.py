@@ -40,3 +40,11 @@ def test_presale_ping_is_filtered_and_capped(tmp_path: Path, monkeypatch):
     assert len(lines) == digest.MAX_PRESALE_LINES + 1
     assert lines[-1] == "...and 40 more."
     assert "Nobody" not in text
+
+
+def test_not_interested_section_never_counts_as_a_match():
+    text = "## Confirmed\n- aespa\n\n## Not interested\n- St. Louis Blues games\n\n## Later\n- Tool\n"
+    kept = digest.positive_interests(text).lower()
+    assert "blues" not in kept
+    assert "aespa" in kept and "tool" in kept  # sections after it survive
+    assert not digest.matches_taste(ev(1, "St. Louis Blues"), set(), kept)
