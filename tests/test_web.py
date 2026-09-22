@@ -97,3 +97,11 @@ def test_digest_profile_never_runs_in_the_vault(settings):
     # next DM (continue_conversation) resumed it instead of their own thread.
     profile = agent.digest_profile(settings)
     assert profile.cwd != settings.vault and settings.vault not in profile.cwd.parents
+
+
+def test_service_line_says_how_the_bot_is_kept_running():
+    assert "qm schedule install" in web.service_line(None)
+    assert "qm schedule install" in web.service_line({"last_run": "not scheduled", "last_result": ""})
+    up = web.service_line({"last_run": "9/22/2026 5:15:33 PM", "last_result": "running"})
+    assert "restarts if it crashes" in up and "5:15:33 PM" in up
+    assert "qm restart" in web.service_line({"last_run": "9/22/2026 5:15:33 PM", "last_result": "1"})

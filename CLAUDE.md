@@ -322,7 +322,7 @@ me about Tool" silences both the digest line and the presale ping. There is no
 
 `surfaces/web.py`, Starlette + uvicorn (already present via `mcp`). Read-only:
 bot status (from `bot.heartbeat`, written every 30s by the bot next to the log),
-scheduled jobs (`schedule.task_info`), recent turns parsed from the log, the
+scheduled jobs (`schedule.task_info`; the service task is shown under the bot, not as a job), recent turns parsed from the log, the
 newest shared-session transcript (labelled discord/web vs terminal by its
 `entrypoint`), a polling log tail, digests, mutes, and `docs/GUIDE.md`.
 `/architecture` serves `docs/architecture.html` as-is: a standalone one-page

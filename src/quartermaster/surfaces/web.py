@@ -383,16 +383,28 @@ def page(title: str, body: str, script: str = "", css: str = "", csrf: str = "")
 <script>{script}</script></body></html>"""
 
 
+def service_line(service: dict | None) -> str:
+    """How the bot is kept running, from the logon task's row in ``task_info``."""
+    if service is None or service["last_run"] == "not scheduled":
+        return "Not started at logon: <code>qm schedule install</code> sets that up."
+    if service["last_result"] == "running":
+        return f"Starts at logon and restarts if it crashes (supervisor up since {_e(service['last_run'])})."
+    return "Starts at logon, but the supervisor isn't running now: <code>qm restart</code> starts it."
+
+
 def dashboard(settings: Settings) -> str:
     running, detail = bot_status(settings)
     _, log_text = read_log_from(settings.log_path, -TAIL_BYTES)
     session_id, entries = session_entries(transcript_dir(settings.vault))
 
+    info = schedule.task_info()
+    # The service keeps the bot running; it isn't a timed job, so it's reported with the bot.
+    service = next((t for t in info if t["name"] == schedule.SERVICE_TASK), None)
     tasks = "".join(
         f"<tr><td>{_e(t['name'])}</td><td>{_e(t['last_run'])}</td>"
         f"<td class='{'ok' if t['last_result'] in ('0', '') else 'bad'}'>{_e(t['last_result'])}</td>"
         f"<td>{_e(t['next_run'])}</td></tr>"
-        for t in schedule.task_info()
+        for t in info if t is not service
     )
     turns = "".join(
         f"<tr><td>{_e(t['at'])}</td><td>{_e(t['profile'])}</td><td>{_e(t['model'].replace('claude-', ''))}</td>"
@@ -413,6 +425,7 @@ def dashboard(settings: Settings) -> str:
 <div class="grid2">
 <section><h2>Bot</h2><p class="{'ok' if running else 'bad'}"><strong>{'Running' if running else 'Not running'}</strong>
 <span class="muted"> {_e(detail)}</span></p>
+<p class="muted">{service_line(service)}</p>
 <p class="muted">Log: {_e(settings.log_path)}<br>Session: {_e(session_id or '-')}
 (<code>claude --continue</code> in the vault resumes it)</p></section>
 <section><h2>Scheduled jobs</h2><table><tr><th>Task</th><th>Last run</th><th>Result</th><th>Next</th></tr>{tasks}</table></section>
