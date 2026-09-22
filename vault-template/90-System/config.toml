@@ -14,7 +14,7 @@ longitude = -90.1994
 name = "local"
 min_miles = 0
 max_miles = 60
-bar = "low"              # a weeknight — STL metro
+bar = "low"              # a weeknight â€” STL metro
 
 [[events.bands]]
 name = "day_trip"
@@ -52,3 +52,10 @@ fresh_after_minutes = 5
 weekday = "sunday"
 hour = 18
 calendar_days_ahead = 7
+
+[public]
+replies_per_hour = 20     # when people in your server just talk to the bot; spends your subscription
+
+[minecraft]
+memory_gb = 4             # heap for the Paper server; you play on the same machine
+dir = ""                  # blank: %LOCALAPPDATA%\quartermaster\minecraft

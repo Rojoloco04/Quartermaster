@@ -71,6 +71,18 @@ DEFAULTS: dict = {
         "hour": 18,
         "calendar_days_ahead": 7,
     },
+    "public": {
+        # Replies per person per rolling hour when people in the server just
+        # talk to the bot. Their chat spends the owner's subscription.
+        "replies_per_hour": 20,
+    },
+    "minecraft": {
+        # Heap for the Paper server. The owner plays on the same machine, so
+        # this is kept well short of what it could take.
+        "memory_gb": 4,
+        # Where the server lives. Blank: the per-user data dir, outside both repos.
+        "dir": "",
+    },
 }
 
 

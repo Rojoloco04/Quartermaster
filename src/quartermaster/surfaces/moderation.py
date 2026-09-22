@@ -117,20 +117,37 @@ async def handle(
     message: discord.Message,
     bot_user: discord.ClientUser,
     request: str,
-) -> None:
-    """Run one moderation request end to end, in a guild channel."""
+) -> bool:
+    """Run one moderation request end to end, in a guild channel. Returns
+    False when the request was just conversation (the caller answers it)."""
     channel = message.channel
     guild = message.guild
     invoker = message.author
     if guild is None or not isinstance(invoker, discord.Member):
         await channel.send("Moderation only works inside a server.")
-        return
+        return True
 
     async with channel.typing():
         plan, error = await parse_request(settings, request)
     if plan is None:
         await channel.send(f"⚠️ {error}")
-        return
+        return True
+    if plan.action == "chat":
+        return False
+
+    # Not a Discord action: permission comes from the server's op list instead.
+    if plan.action == "minecraft":
+        from . import minecraft_chat
+
+        await minecraft_chat.handle(settings, message, plan)
+        return True
+
+    await _moderate(settings, message, bot_user, plan)
+    return True
+
+
+async def _moderate(settings: Settings, message: discord.Message, bot_user: discord.ClientUser, plan: OpsPlan) -> None:
+    channel, guild, invoker = message.channel, message.guild, message.author
 
     async def deny(problems: list[str], target: object = None, kind: str = "denied") -> None:
         log.warning(

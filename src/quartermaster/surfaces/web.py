@@ -4,8 +4,9 @@ Bot status, scheduled jobs, recent agent turns, the live shared conversation
 (Discord and terminal), a tailing log, digests, mutes, the vault drawn as a graph
 (/brain), the user guide, and /settings: every preference, the agent's
 instructions, facts, lessons, mutes and the dev queue, viewable and editable.
-And /chat: the owner's conversation, the same session as the Discord DMs.
-Those edits and chat turns are the only things here that change state.
+And /chat: the owner's conversation, the same session as the Discord DMs, and
+/servers: each game server's status, start/stop and live console.
+Those edits, chat turns and start/stops are the only things here that change state.
 
 The log and transcripts hold email snippets and DMs, so it binds to localhost.
 Binding anywhere else (a Tailscale address, say) requires ``QM_WEB_TOKEN``;
@@ -107,8 +108,10 @@ def session_entries(folder: Path, limit: int = 40) -> tuple[str, list[dict]]:
     return files[-1].stem, out[-limit:]
 
 
-def read_log_from(path: Path, pos: int) -> tuple[int, str]:
-    """New log text since byte ``pos`` (a negative pos means "the last -pos bytes")."""
+def read_log_from(path: Path, pos: int, whole_lines: bool = False) -> tuple[int, str]:
+    """New log text since byte ``pos`` (a negative pos means "the last -pos bytes").
+    ``whole_lines`` holds back a trailing partial line for the next read, so a
+    caller filtering by line never sees half of one."""
     if not path.exists():
         return 0, ""
     size = path.stat().st_size
@@ -119,6 +122,8 @@ def read_log_from(path: Path, pos: int) -> tuple[int, str]:
     with path.open("rb") as fh:
         fh.seek(pos)
         data = fh.read(TAIL_BYTES)
+    if whole_lines and b"\n" in data:
+        data = data[: data.rindex(b"\n") + 1]
     return pos + len(data), data.decode("utf-8", "replace")
 
 
@@ -129,7 +134,7 @@ def read_log_from(path: Path, pos: int) -> tuple[int, str]:
 # next sync overwrites it; edit in Notion), and not digests or the inbox.
 
 EDITABLE = ("CLAUDE.md", "90-System/config.toml", "90-System/muted.md", "90-System/dev-queue.md",
-            "90-System/conflicts.md")
+            "90-System/conflicts.md", "90-System/minecraft-links.md")
 _FACT = re.compile(r"facts/[\w.-]+\.md")
 
 
@@ -371,7 +376,7 @@ def _e(value: object) -> str:
 
 # One nav for every page, the standalone architecture page included (it is
 # served with its own copy swapped for this one, so the two can't drift).
-NAV = ('<nav><a href="/">Dashboard</a><a href="/chat">Chat</a><a href="/brain">Brain</a>'
+NAV = ('<nav><a href="/">Dashboard</a><a href="/chat">Chat</a><a href="/brain">Brain</a><a href="/servers">Servers</a>'
        '<a href="/settings">Settings</a><a href="/architecture">Architecture</a><a href="/guide">Guide</a></nav>')
 
 
@@ -381,6 +386,68 @@ def page(title: str, body: str, script: str = "", css: str = "", csrf: str = "")
 <meta name="qm-csrf" content="{_e(csrf)}"><style>{CSS}{css}</style></head><body><header><h1>Quartermaster</h1>
 {NAV}</header><main>{body}</main>
 <script>{script}</script></body></html>"""
+
+
+SERVERS_CSS = """
+.tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px }
+.tabs a { padding:4px 10px; border:1px solid var(--line); border-radius:6px; text-decoration:none; color:var(--fg) }
+.tabs a.on { background:var(--code); font-weight:600 }
+#serverlog { height:520px } .actions { display:flex; gap:8px; align-items:center; margin:8px 0 12px }
+"""
+
+SERVERS_JS = """
+const QM_CSRF = document.querySelector('meta[name=qm-csrf]').content;
+const game = document.getElementById('server').dataset.game;
+const el = document.getElementById('serverlog'), st = document.getElementById('serverstatus'),
+      msg = document.getElementById('servermsg');
+let pos = -20000;
+async function pollLog() {
+  try {
+    const d = await (await fetch(`/api/servers/${game}/log?pos=${pos}`)).json();
+    if (d.reset) el.textContent = '';
+    if (d.text) { const stick = el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
+      el.textContent += d.text; if (el.textContent.length > 400000) el.textContent = el.textContent.slice(-300000);
+      if (stick) el.scrollTop = el.scrollHeight; }
+    pos = d.pos;
+  } catch (e) {}
+  setTimeout(pollLog, 2000);
+}
+async function pollStatus() {
+  try { st.textContent = (await (await fetch(`/api/servers/${game}/status`)).json()).status; } catch (e) {}
+  setTimeout(pollStatus, 10000);
+}
+document.querySelectorAll('[data-action]').forEach(b => b.addEventListener('click', async () => {
+  const action = b.dataset.action;
+  if (action === 'stop' && !confirm('Stop the server? Anyone on it is disconnected.')) return;
+  document.querySelectorAll('[data-action]').forEach(x => x.disabled = true);
+  msg.className = 'muted'; msg.textContent = action === 'stop' ? 'Stopping (saving the world)…' : 'Starting…';
+  try {
+    const r = await fetch(`/api/servers/${game}/${action}`, {method: 'POST', headers: {'X-QM-CSRF': QM_CSRF}});
+    const d = await r.json(); msg.className = r.ok ? 'ok' : 'bad'; msg.textContent = d.result || d.error;
+  } catch (e) { msg.className = 'bad'; msg.textContent = 'Request failed.'; }
+  document.querySelectorAll('[data-action]').forEach(x => x.disabled = false);
+  st.textContent = (await (await fetch(`/api/servers/${game}/status`)).json()).status;
+}));
+pollLog(); pollStatus();
+"""
+
+
+def servers_page(key: str, status: str, log_path: Path, csrf: str) -> str:
+    """One tab per game; the chosen one's status, start/stop and live console."""
+    from ..integrations.game_servers import GAMES
+
+    game = GAMES[key]
+    tabs = "".join(f"<a href='/servers/{g.key}' class='{'on' if g.key == key else ''}'>{_e(g.title)}</a>"
+                   for g in GAMES.values())
+    return page("Servers", f"""
+<section id="server" data-game="{_e(key)}"><h2>Game servers</h2><div class="tabs">{tabs}</div>
+<p><strong>{_e(game.title)}</strong>: <span id="serverstatus">{_e(status)}</span></p>
+<div class="actions"><button type="button" data-action="start">Start</button>
+<button type="button" data-action="stop">Stop</button><span id="servermsg"></span></div>
+<pre id="serverlog"></pre>
+<p class="muted">The console of the current (or last) run: <code>{_e(log_path)}</code>.
+Commands go through the bot in Discord.</p>
+</section>""", SERVERS_JS, SERVERS_CSS, csrf)
 
 
 def service_line(service: dict | None) -> str:
@@ -676,6 +743,7 @@ are edited in Notion: the mirror is overwritten on every sync.</p></section>
 <section><h2>Mutes</h2>{file_block(vault, "90-System/muted.md", "Never raise these again", "One <code>kind:key</code> per line. <code>artist/Tool</code> with no kind mutes every kind.")}</section>
 <section><h2>Dev queue</h2>{file_block(vault, "90-System/dev-queue.md", "Changes to Quartermaster itself", "Worked in Claude Code. Tick an item with <code>[x]</code> to close it.")}</section>
 </div>
+<section><h2>Minecraft links</h2>{file_block(vault, "90-System/minecraft-links.md", "Discord accounts linked to Minecraft names", "A linked name on the server's op list may start, stop and run commands from a Discord channel. Added when someone proves both accounts in-game; delete a line to unlink.")}</section>
 <section><h2>Secrets</h2><p class="note">In the repo's <code>.env</code>. Shown as set or not, never their values, and not editable from a browser.</p>
 <table>{env}</table></section>""", EDIT_JS + PREF_JS, EDIT_CSS + PREF_CSS, csrf)
 
@@ -778,6 +846,51 @@ def build_app(settings: Settings, token: str | None = None, hosts: tuple[str, ..
 
     async def chat_view(request: Request):
         return HTMLResponse(chat_page(settings, csrf))
+
+    # --- Game servers: status, start/stop, console. Each call can block (RCON,
+    # tasklist, a 60s stop), so they run off the event loop.
+    from ..integrations.game_servers import GAMES, clean_console
+
+    async def game_status(game) -> str:
+        try:
+            return await asyncio.to_thread(game.module.status, settings)
+        except RuntimeError as exc:
+            return str(exc)
+
+    async def servers(request: Request):
+        key = request.path_params.get("game") or next(iter(GAMES))
+        if key not in GAMES:
+            return PlainTextResponse("No such server.", status_code=404)
+        game = GAMES[key]
+        return HTMLResponse(servers_page(key, await game_status(game), game.module.log_path(settings), csrf))
+
+    async def api_server_status(request: Request):
+        game = GAMES.get(request.path_params["game"])
+        if game is None:
+            return JSONResponse({"error": "No such server."}, status_code=404)
+        return JSONResponse({"status": await game_status(game)})
+
+    async def api_server_log(request: Request):
+        game = GAMES.get(request.path_params["game"])
+        if game is None:
+            return JSONResponse({"error": "No such server."}, status_code=404)
+        asked = int(request.query_params.get("pos", -20000))
+        pos, text = read_log_from(game.module.log_path(settings), asked, whole_lines=True)
+        # The console is truncated at each start: tell the page to clear.
+        return JSONResponse({"pos": pos, "text": clean_console(game, text), "reset": asked > 0 and pos < asked})
+
+    async def api_server_action(request: Request):
+        if not secrets.compare_digest(request.headers.get("x-qm-csrf", ""), csrf):
+            return JSONResponse({"error": "Missing or stale page token. Reload the page."}, status_code=403)
+        game, action = GAMES.get(request.path_params["game"]), request.path_params["action"]
+        if game is None or action not in ("start", "stop"):
+            return JSONResponse({"error": "No such server or action."}, status_code=404)
+        try:
+            result = await asyncio.to_thread(getattr(game.module, action), settings)
+        except RuntimeError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        log.info("web: %s %s: %s", action, game.key, result)
+        return JSONResponse({"result": result})
 
     # The web chat's own turn, as the bot keeps its own: "stop" here cancels
     # this one. chat.TurnLock keeps it from overlapping a Discord turn.
@@ -897,6 +1010,11 @@ def build_app(settings: Settings, token: str | None = None, hosts: tuple[str, ..
         Route("/api/brain", guarded(api_brain)),
         Route("/api/brain/note", guarded(api_brain_note)),
         Route("/api/log", guarded(api_log)),
+        Route("/servers", guarded(servers)),
+        Route("/servers/{game}", guarded(servers)),
+        Route("/api/servers/{game}/status", guarded(api_server_status)),
+        Route("/api/servers/{game}/log", guarded(api_server_log)),
+        Route("/api/servers/{game}/{action}", guarded(api_server_action), methods=["POST"]),
         Route("/digest/{name}", guarded(digest)),
         Route("/guide", guarded(guide)),
     ])

@@ -1,6 +1,7 @@
 """Reconcile: bloat removed in code-checked edits, disagreements asked, never
 guessed. And `qm quit`, which picks what to kill."""
 
+import asyncio
 from datetime import date
 from pathlib import Path
 
@@ -98,6 +99,17 @@ def test_run_applies_asks_and_dms(settings, monkeypatch):
     assert sent == [] and not reconcile.conflicts_path(settings).exists()
     reconcile.run_reconcile(settings)
     assert len(sent) == 1 and "which is right" in sent[0]
+
+
+def test_run_from_chat_returns_conflicts_without_a_dm(settings, monkeypatch):
+    async def fake_ask(prompt, profile, cli):
+        return agent.Reply(text="", structured={"edits": [], "conflicts": [CONFLICT]})
+
+    monkeypatch.setattr(agent, "ask", fake_ask)
+    monkeypatch.setattr("quartermaster.surfaces.digest_send.send_dm", lambda s, text: pytest.fail("sent a DM"))
+    result = asyncio.run(reconcile.reconcile(settings, notify=False))
+    assert "Do you already have tickets" in result
+    assert "Do you already have tickets" in reconcile.conflicts_path(settings).read_text(encoding="utf-8")
 
 
 def test_quiet_when_consistent(settings, monkeypatch):

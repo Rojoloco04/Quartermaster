@@ -49,7 +49,12 @@ class TestBuildTasks:
         presale = next(t for t in tasks if t.name == PRESALE_TASK)
         assert digest.command[-1] == "digest"
         assert presale.command[-1] == "presale-check"
-        assert digest.command[0].endswith("qm.exe")
+
+    def test_every_job_runs_windowless(self, settings):
+        # qm.exe is a console program: registered as it, each job opened a
+        # Windows Terminal at its hour (the 18:00 digest, 2026-09-22).
+        for task in build_tasks(settings, "daily"):
+            assert task.command[0].endswith("pythonw.exe") and task.command[1:3] == ["-m", "quartermaster.cli"]
 
     def test_notion_sync_runs_daily_before_the_other_jobs(self, settings):
         # The stale-page scan reads the mirror; it must not be days old.

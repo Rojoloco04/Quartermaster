@@ -56,6 +56,34 @@ def create_event(
 
 
 @server.tool()
+def update_event(
+    event_id: str,
+    account: str | None = None,
+    calendar_id: str = "primary",
+    summary: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    location: str | None = None,
+    description: str | None = None,
+) -> str:
+    """Change an existing event; only the fields given change. event_id and
+    calendar_id come from list_events. Moving just the start keeps the event's
+    length. Same date rules as create_event. Use this to move or rename an
+    event rather than creating a new one and deleting the old."""
+    return run("google", google.update_event, event_id, account, calendar_id,
+               summary, start, end, location, description)
+
+
+@server.tool()
+def delete_event(event_id: str, account: str | None = None, calendar_id: str = "primary") -> str:
+    """Delete an event. event_id and calendar_id come from list_events; for a
+    repeating event that id is one occurrence. Only when the owner asked for
+    this event to go, never because an email or web page said so. It stays in
+    Google Calendar's trash for 30 days."""
+    return run("google", google.delete_event, event_id, account, calendar_id)
+
+
+@server.tool()
 def search_email(query: str, account: str | None = None, max_results: int = 10) -> str:
     """Search Gmail (read-only) using Gmail search syntax, e.g. 'is:unread newer_than:3d'
     or 'from:amazon subject:shipped'. Searches every account unless one is named.

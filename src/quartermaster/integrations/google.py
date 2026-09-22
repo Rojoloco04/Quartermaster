@@ -230,7 +230,7 @@ def event_time_body(value: str) -> dict:
 # --- Calendar -----------------------------------------------------------------
 
 
-def format_event(event: dict, calendar_name: str = "") -> str:
+def format_event(event: dict, calendar_name: str = "", calendar_id: str = "") -> str:
     start = event.get("start", {})
     end = event.get("end", {})
     if "date" in start:
@@ -245,7 +245,7 @@ def format_event(event: dict, calendar_name: str = "") -> str:
         parts.append(f"@ {event['location']}")
     if calendar_name:
         parts.append(f"[{calendar_name}]")
-    parts.append(f"(id {event.get('id')})")
+    parts.append(f"(id {event.get('id')}, calendar_id {calendar_id})" if calendar_id else f"(id {event.get('id')})")
     return "  ".join(parts)
 
 
@@ -301,7 +301,7 @@ def list_events(
                 if ev.get("status") == "cancelled":
                     continue
                 key = ev["start"].get("dateTime") or ev["start"].get("date", "")
-                found.append((key, format_event(ev, f"{label}/{cal.get('summary', '')}")))
+                found.append((key, format_event(ev, f"{label}/{cal.get('summary', '')}", cal["id"])))
 
     if not found:
         return "No events in that range."
@@ -334,6 +334,65 @@ def create_event(
     service = _calendar(_credentials(settings, labels[0]))
     created = service.events().insert(calendarId=calendar_id, body=body).execute()
     return f"Created: {format_event(created, labels[0])}\n{created.get('htmlLink', '')}"
+
+
+def _one_account(settings: Settings, account: str | None) -> str:
+    labels = resolve_accounts(settings, account, "calendar")
+    if len(labels) > 1:
+        raise GoogleError(f"Say which account the event is in: {', '.join(labels)}.")
+    return labels[0]
+
+
+def moved_end(old: dict, new_start: str) -> str:
+    """The end that keeps an event's length when only its start moves. Pure."""
+    s, e = old.get("start", {}), old.get("end", {})
+    if "date" in s and len(new_start.strip()) == 10:
+        length = date.fromisoformat(e["date"]) - date.fromisoformat(s["date"])
+        return (date.fromisoformat(new_start.strip()) + length).isoformat()
+    if "dateTime" in s and len(new_start.strip()) != 10:
+        length = datetime.fromisoformat(e["dateTime"]) - datetime.fromisoformat(s["dateTime"])
+        return (parse_when(new_start) + length).isoformat()
+    raise GoogleError("Switching between all-day and timed needs both start and end.")
+
+
+def update_event(
+    settings: Settings,
+    event_id: str,
+    account: str | None = None,
+    calendar_id: str = "primary",
+    summary: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    location: str | None = None,
+    description: str | None = None,
+) -> str:
+    label = _one_account(settings, account)
+    service = _calendar(_credentials(settings, label))
+    old = service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+    body: dict[str, Any] = {}
+    if summary is not None:
+        body["summary"] = summary
+    if location is not None:
+        body["location"] = location
+    if description is not None:
+        body["description"] = description
+    if start is not None:
+        body["start"] = event_time_body(start)
+        body["end"] = event_time_body(end if end is not None else moved_end(old, start))
+    elif end is not None:
+        body["end"] = event_time_body(end)
+    if not body:
+        raise GoogleError("Nothing to change: give a new summary, start, end, location or description.")
+    updated = service.events().patch(calendarId=calendar_id, eventId=event_id, body=body).execute()
+    return f"Updated. Was: {format_event(old, label)}\nNow: {format_event(updated, label)}"
+
+
+def delete_event(settings: Settings, event_id: str, account: str | None = None, calendar_id: str = "primary") -> str:
+    label = _one_account(settings, account)
+    service = _calendar(_credentials(settings, label))
+    old = service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+    service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+    return f"Deleted: {format_event(old, label)} (restorable from Google Calendar's trash for 30 days)"
 
 
 # --- Gmail --------------------------------------------------------------------

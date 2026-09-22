@@ -30,8 +30,11 @@ Still open from Phase 4:
   second copy can't start. Native, not Docker: a containerised bot would split
   the shared session and needs its own Linux login (revisit for a sandbox or a
   move to a server).
-- **Scheduled push** of the vault to its private remote.
-- **restic** nightly to a second drive, **with a verified test restore**.
+- ~~**Scheduled push**~~ of the vault to its private remote — done 2026-09-22:
+  `qm push`, daily at 23:00; commits everything, never forces.
+- ~~**restic** nightly to a second drive~~ — dropped 2026-09-22: the vault's git
+  remote already keeps every version off this machine. What isn't in it is
+  rebuildable (`state.db`) or re-creatable (`.env`, OAuth tokens: `qm auth`).
 - **Uptime Kuma** watching the bot and the scheduled jobs.
 - **Tailscale**; no router port forwarding.
 - Uptime Kuma needs **WSL2 + Docker**, neither of which is installed yet.
@@ -124,18 +127,22 @@ Streaming with NVENC hardware transcoding.
   **No agent, no vault, no model cost.** Nothing about it needs Claude, and routing
   it through the agent would only add a path to the vault that has no reason to
   exist.
-- **Letting friends talk to the bot.** The public profile exists and is inert
-  (`tools=[]`, `enabled=False`, `cwd` outside the vault, no shared session). Turning
-  it on means *adding* capabilities to an empty list — never removing access from a
-  privileged agent. Note that other people's conversations would spend the owner's
-  subscription limits.
+- **Letting friends talk to the bot.** Chat is on (2026-09-22): a guild mention
+  the parser calls `chat` gets a reply from the public profile, which still has
+  `tools=[]`, no vault and no session, capped per person per hour. Anything
+  more means *adding* capabilities to that empty list, never removing access
+  from a privileged agent. Next, if wanted: memory of the channel's recent
+  messages, so a reply can follow the conversation.
 - **Voice playback** — needs `PyNaCl` and ffmpeg. The bot currently logs a warning
   that voice is unsupported. Voice *moderation* already works; it is a different API.
 - **Restock tracker** for food and snacks: what's running low, with links only.
 - **A `/budget` command** in Discord. Links and summaries only: no bank logins,
   nothing that moves money.
-- **Game servers for friends**, reachable over Tailscale (after Phase 5). No port
-  forwarding.
+- **Game servers for friends**, reachable over Tailscale. No port forwarding.
+  Piloting with Minecraft (Paper) since 2026-09-22: `qm minecraft`, and the bot
+  starts/stops it and runs allow-listed commands over RCON. Satisfactory next,
+  once there's a separate server box (or on this PC: 32GB is enough for a
+  small save alongside the game).
 - **Persistent voice-mute timers.** "Mute for 30s" is scheduled in memory today, so a
   restart leaves the person muted. Move pending undos into `state.db`.
 

@@ -107,7 +107,7 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
 </head>
 <body>
 <header class="top"><h1>Quartermaster</h1><nav>
-<a href="/">Dashboard</a><a href="/chat">Chat</a><a href="/brain">Brain</a><a href="/settings">Settings</a><a href="/architecture">Architecture</a><a href="/guide">Guide</a></nav></header>
+<a href="/">Dashboard</a><a href="/chat">Chat</a><a href="/brain">Brain</a><a href="/servers">Servers</a><a href="/settings">Settings</a><a href="/architecture">Architecture</a><a href="/guide">Guide</a></nav></header>
 <main>
 
 <div class="lede">
@@ -126,15 +126,15 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
     <div class="lane surface">
       <h4>Where it's reached</h4>
       <div class="box surface"><b>Discord DMs</b><span>the owner's assistant, streamed replies</span></div>
-      <div class="box surface"><b>Discord channels</b><span>moderation and expression</span></div>
+      <div class="box surface"><b>Discord channels</b><span>moderation and expression; Minecraft for linked ops</span></div>
       <div class="box surface"><b>Terminal <code>claude</code></b><span>run in the vault, same conversation as DMs</span></div>
       <div class="box surface"><b><code>qm web</code></b><span>dashboard, chat, brain, settings (localhost)</span></div>
-      <div class="box surface"><b>Task Scheduler</b><span>sync, reconcile, presale, digest, tidy</span></div>
+      <div class="box surface"><b>Task Scheduler</b><span>sync, reconcile, presale, digest, tidy, vault push</span></div>
     </div>
     <div class="lane core">
       <h4>Quartermaster (Python)</h4>
       <div class="box core"><b>surfaces/</b><span>discord_bot, moderation, web, brain, digest_send</span></div>
-      <div class="box core"><b>jobs</b><span>notion_sync, reconcile, digest + presale, claude_tidy</span></div>
+      <div class="box core"><b>jobs</b><span>notion_sync, reconcile, digest + presale, claude_tidy, vault_push</span></div>
       <div class="box core"><b>agent.py</b><span>profiles, model routing, lessons + conflicts in context</span></div>
       <div class="box guard"><b>check_tool hook</b><span>re-checks every tool call and path</span></div>
     </div>
@@ -143,7 +143,7 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
       <div class="box model"><b>Claude CLI (claude.exe)</b><span>one subprocess per turn, via the Agent SDK</span></div>
       <div class="box model"><b>MCP: google</b><span>Calendar read/write, Gmail read-only</span></div>
       <div class="box model"><b>MCP: microsoft, spotify</b><span>To Do; listening history</span></div>
-      <div class="box model"><b>MCP: qm</b><span>Claude page, Notion proposals, sync, dev queue, lessons</span></div>
+      <div class="box model"><b>MCP: qm</b><span>Claude page, Notion proposals, sync, reconcile, dev queue, lessons, Minecraft</span></div>
     </div>
     <div class="lane store">
       <h4>Where things live</h4>
@@ -196,7 +196,7 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
   <div class="tablewrap"><table>
     <tr><th>Profile</th><th>Used by</th><th>Runs in</th><th>Tools</th><th>Session</th><th>Model</th></tr>
     <tr><td><b>owner</b></td><td>your DMs, the web chat, the terminal</td><td>the vault</td><td class="y">vault files, web research, MCP</td><td>shared</td><td>Sonnet</td></tr>
-    <tr><td><b>public</b></td><td>other people in channels</td><td>own workspace</td><td class="n">none</td><td>separate</td><td class="off">disabled</td></tr>
+    <tr><td><b>public</b></td><td>chat when mentioned in a channel</td><td>own workspace</td><td class="n">none</td><td>none</td><td>Haiku</td></tr>
     <tr><td><b>parser</b></td><td>moderation requests</td><td>own workspace</td><td class="n">none, JSON out</td><td>none</td><td>Haiku</td></tr>
     <tr><td><b>digest</b></td><td>the digest</td><td>own workspace</td><td class="n">none</td><td>none</td><td>Sonnet</td></tr>
     <tr><td><b>tidy</b></td><td>weekly Claude page tidy</td><td>own workspace</td><td class="n">none</td><td>none</td><td>Sonnet</td></tr>
@@ -246,7 +246,8 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
     <div class="ev low" style="--k:var(--c-model); left:calc(24px + (100% - 48px) * .25)"><b>Sun 09:00</b>Claude page tidy</div>
     <div class="ev" style="--k:var(--c-guard); left:calc(24px + (100% - 48px) * 1); transform:translateX(-75%)"><b>digest.hour</b>digest DM</div>
   </div>
-  <p class="sub">The digest time comes from <code>config.toml</code> (daily for now, weekly on Sundays later). Sync runs first, so the other jobs read a fresh mirror.</p>
+  <p class="sub">The digest time comes from <code>config.toml</code> (daily for now, weekly on Sundays later). Sync runs first, so the other jobs read a fresh mirror.
+  Last, at 23:00, <code>qm push</code> commits the vault and pushes it to its private remote, which is its backup.</p>
 </section>
 
 <section>
@@ -259,6 +260,7 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
     <div class="mod"><code>digest.py</code><span>collectors (calendar, weather, events, prices, stale pages) → one prompt</span></div>
     <div class="mod"><code>reconcile.py</code><span>daily dedupe and conflict check of facts</span></div>
     <div class="mod"><code>lessons.py</code><span>corrections kept and read every turn</span></div>
+    <div class="mod"><code>vault_push.py</code><span>daily commit + push of the vault, its backup</span></div>
     <div class="mod"><code>notion_writes.py</code><span>proposals applied only after Confirm</span></div>
     <div class="mod"><code>claude_tidy.py</code><span>weekly prune of the agent's Notion page</span></div>
     <div class="mod"><code>discord_ops.py</code><span>moderation plans, permissions, matching</span></div>

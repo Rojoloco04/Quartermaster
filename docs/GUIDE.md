@@ -30,8 +30,9 @@ with `claude --continue`. The **Chat** page in `qm web`
   Change the minutes with `chat.fresh_after_minutes` on the Settings page (0 =
   never); it applies from the next message, no restart.
 
-What it can reach: your vault (read and write), the web, Google Calendar and
-Gmail (Gmail is read-only), Microsoft To Do (including checklist steps), Spotify
+What it can reach: your vault (read and write), the web, Google Calendar (add,
+move, rename and delete events; a deleted one sits in Google Calendar's trash
+for 30 days) and Gmail (Gmail is read-only), Microsoft To Do (including checklist steps), Spotify
 (read-only), and Notion.
 
 In Notion it writes to your `Claude` page and its sub-pages freely. For any
@@ -78,6 +79,42 @@ yourself with your own Discord permissions. Anything irreversible shows a
 preview with Confirm/Cancel first. Replying to a message and saying "delete that"
 targets exactly that message.
 
+Anything that isn't a request for an action ("what's the best seed?", banter)
+just gets a reply. That side of the bot knows nothing about you and can't do
+anything, and each person gets `public.replies_per_hour` replies an hour
+(default 20), since it runs on your subscription.
+
+## Minecraft
+
+A Paper server on this PC that friends join over Tailscale (no port forwarding).
+DM the bot: "start the minecraft server", "who's on?", "whitelist Steve", "set
+it to day", "stop the server". It asks before stopping if people are online.
+Commands that hand out power (`op`, `execute`, ...) are refused, from chat and
+`qm minecraft cmd` alike. To make someone an op (yourself first), with the
+server running: `qm minecraft op <name>` in a terminal, which also whitelists them.
+
+- One-time: `qm minecraft setup --accept-eula` downloads the newest stable Paper
+  (it tells you if Java is too old), whitelists by default and turns on RCON,
+  which is how the bot talks to it. Re-run it to update Paper (server stopped).
+- `qm minecraft` / `start` / `stop` / `cmd whitelist add Steve` do the same from a
+  terminal. The server lives in `%LOCALAPPDATA%\quartermaster\minecraft`
+  (`minecraft.dir`), with `minecraft.memory_gb` of RAM (default 4).
+- Friends: they install Tailscale, you share this machine with them from the
+  Tailscale admin console, they whitelist-in and connect to this PC's Tailscale
+  address (`tailscale ip -4`) on port 25565.
+- `qm quit` leaves the server running; stop it with the bot or `qm minecraft stop`.
+- The **Servers** tab in `qm web` has a tab per game server: its status, Start
+  and Stop buttons, and its live console.
+
+**From your Discord server**, anyone can @mention the bot to ask who's on. Starting,
+stopping and commands are for the server's **ops** only, and the bot knows
+who's an op by linking Discord accounts to Minecraft names: a friend joins the
+game and @mentions "link me to Steve", the bot whispers them a code in-game,
+and they @mention "verify <code>". That proves both accounts, so nobody can
+claim an op's name. Whoever's on the op list (`ops.json`, via `op` in the game
+or by hand) gets control; de-op them and it goes. Stopping asks to confirm.
+Links are on the Settings page; delete a line to unlink. You don't need one.
+
 ## Seeing what it's doing
 
 - `qm web` opens a dashboard at http://127.0.0.1:8766: whether the bot is up,
@@ -120,12 +157,18 @@ targets exactly that message.
   supervisor and any job mid-run. They stay stopped until `qm restart` or your
   next logon.
 - `qm schedule install --digest-cadence daily` (or `weekly`) registers the
-  service (at logon), the Notion sync (07:00), knowledge reconcile (07:30), presale check (08:00) and digest.
-  `qm schedule status` shows them.
+  service (at logon), the Notion sync (07:00), knowledge reconcile (07:30), presale check (08:00), digest
+  and vault push (23:00). `qm schedule status` shows them. They run with no
+  window; their output is in the log (and on the dashboard).
+- `qm push` commits everything in the vault and pushes it to its private
+  remote; that remote is the vault's backup. It runs daily at 23:00 on its own.
+  It never forces: if the push is rejected or a merge is half-done, it fails
+  (see the log) and leaves it for you.
 - `qm reconcile` checks what Quartermaster knows against itself and Notion:
   it merges duplicates, drops plans whose date has passed, and DMs you a
   question wherever two sources disagree (also listed on the Settings page).
-  `--dry-run` shows what it would do. It runs daily at 07:30 on its own.
+  `--dry-run` shows what it would do. It runs daily at 07:30 on its own, or
+  ask the bot ("reconcile what you know") and it answers in the conversation.
 - Changed something in Notion and don't want to wait for the 07:00 sync? Ask
   the bot to sync ("sync my notion"), or run `qm sync`. Pages you delete in
   Notion leave the mirror and the brain on the next sync. If a sync would remove

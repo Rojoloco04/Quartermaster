@@ -369,6 +369,43 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_push(args: argparse.Namespace) -> int:
+    from . import vault_push
+
+    settings = load_settings()
+    try:
+        print(vault_push.run_push(settings.vault))
+    except Exception as exc:  # noqa: BLE001 - unattended: report, don't vanish
+        log.exception("vault push failed")
+        print(f"Vault push failed: {exc}")
+        return 1
+    return 0
+
+
+def cmd_minecraft(args: argparse.Namespace) -> int:
+    from .integrations import minecraft
+
+    settings = load_settings()
+    try:
+        if args.action == "setup":
+            print(minecraft.setup(settings, accept_eula=args.accept_eula))
+        elif args.action == "start":
+            print(minecraft.start(settings))
+        elif args.action == "stop":
+            print(minecraft.stop(settings))
+        elif args.action == "cmd":
+            print(minecraft.command(settings, " ".join(args.text)))
+        elif args.action == "op":
+            print(minecraft.grant_op(settings, " ".join(args.text)))
+        else:
+            print(minecraft.status(settings))
+            print(f"Folder: {minecraft.server_dir(settings)}")
+    except minecraft.MinecraftError as exc:
+        print(exc)
+        return 1
+    return 0
+
+
 def cmd_quit(args: argparse.Namespace) -> int:
     from . import procs
 
@@ -418,7 +455,8 @@ def cmd_schedule(args: argparse.Namespace) -> int:
         print(
             f"\nBot + web: started at logon and kept running ({schedule.SERVICE_TASK}; qm restart starts it now). "
             f"Notion sync: daily at {schedule.SYNC_HOUR:02d}:00. Digest: {args.digest_cadence}. "
-            f"Presale check: daily at {schedule.PRESALE_HOUR:02d}:00."
+            f"Presale check: daily at {schedule.PRESALE_HOUR:02d}:00. "
+            f"Reconcile: daily at {schedule.RECONCILE_TIME}. Vault push: daily at {schedule.PUSH_TIME}."
         )
     elif args.action == "remove":
         for line in schedule.remove():
@@ -480,7 +518,8 @@ def main(argv: list[str] | None = None) -> int:
     # model writes (em dashes, curly quotes, ...). Without this, `qm digest`
     # crashes on its own output the first time the prose isn't pure ASCII.
     # Under pythonw (the logon task) there is no console: both are None.
-    if sys.stdout is None or sys.stderr is None:
+    windowless = sys.stdout is None or sys.stderr is None
+    if windowless:
         devnull = open(os.devnull, "w", encoding="utf-8")
         sys.stdout, sys.stderr = sys.stdout or devnull, sys.stderr or devnull
     for stream in (sys.stdout, sys.stderr):
@@ -534,6 +573,16 @@ def main(argv: list[str] | None = None) -> int:
     p_reconcile.add_argument("--dry-run", action="store_true", help="print what it would change; write nothing")
     p_reconcile.set_defaults(func=cmd_reconcile)
 
+    sub.add_parser("push", help="commit everything in the vault and push it to its remote").set_defaults(
+        func=cmd_push
+    )
+
+    p_mc = sub.add_parser("minecraft", help="the Paper server friends reach over Tailscale")
+    p_mc.add_argument("action", nargs="?", default="status", choices=["status", "setup", "start", "stop", "cmd", "op"])
+    p_mc.add_argument("text", nargs="*", help="cmd: the server command (whitelist add Steve); op: a player to whitelist and op")
+    p_mc.add_argument("--accept-eula", action="store_true", help="setup: you agree to Mojang's EULA")
+    p_mc.set_defaults(func=cmd_minecraft)
+
     sub.add_parser("quit", aliases=["stop"], help="stop every running Quartermaster process (bot, web, jobs)").set_defaults(
         func=cmd_quit
     )
@@ -573,11 +622,27 @@ def main(argv: list[str] | None = None) -> int:
     p_mcp.set_defaults(func=cmd_mcp)
 
     args = parser.parse_args(argv)
+    if windowless and args.command != "serve":
+        return _rerun_in_hidden_console(argv if argv is not None else sys.argv[1:])
     try:
         _configure_logging(load_settings())
     except RuntimeError:
         pass  # no vault configured yet; doctor says so, and there is nowhere to log
     return int(args.func(args) or 0)
+
+
+def _rerun_in_hidden_console(argv: list[str]) -> int:
+    """A scheduled job starts under pythonw so no window opens, but it runs
+    console programs (claude.exe, git, schtasks), and a console program with no
+    console to inherit opens a window of its own. So run the job once more as
+    python.exe with CREATE_NO_WINDOW: a hidden console that everything below it
+    shares. (Registered as qm.exe, every job opened a Windows Terminal.)"""
+    python = Path(sys.executable).with_name("python.exe")
+    return subprocess.run(
+        [str(python), "-m", "quartermaster.cli", *argv],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    ).returncode
 
 
 if __name__ == "__main__":

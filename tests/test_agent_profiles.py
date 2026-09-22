@@ -65,8 +65,11 @@ class TestContainment:
         opts = _options(public_profile(settings))
         assert opts.tools == [], "an empty base tool set is what actually removes them"
 
-    def test_public_profile_is_off_by_default(self, settings: Settings):
-        assert public_profile(settings).enabled is False
+    def test_public_profile_only_talks(self, settings: Settings):
+        # On since 2026-09-22 for guild chat: enabled, but still nothing to hold.
+        pub = public_profile(settings)
+        assert pub.enabled and pub.tools == [] and pub.allowed_tools == [] and pub.mcp_servers == {}
+        assert pub.lessons_file is None and pub.conflicts_file is None
 
     def test_public_profile_does_not_share_the_owner_session(self, settings: Settings):
         # Sharing would put other people's messages into the thread the owner

@@ -216,11 +216,17 @@ def report(applied: list[str], skipped: list[str], conflicts: list[dict]) -> str
 
 
 def run_reconcile(settings: Settings, *, dry_run: bool = False) -> str:
+    return asyncio.run(reconcile(settings, dry_run=dry_run))
+
+
+async def reconcile(settings: Settings, *, dry_run: bool = False, notify: bool = True) -> str:
+    """The daily run DMs what it found (`notify`); run from a DM, the owner
+    is already in the conversation, so the result is only returned."""
     facts, notion = gather(settings)
     if not facts:
         return "No facts files; nothing to reconcile."
     prompt = build_prompt(facts, notion, date.today())
-    reply = asyncio.run(agent.ask(prompt, agent.reconcile_profile(settings, SCHEMA), settings.claude_cli))
+    reply = await agent.ask(prompt, agent.reconcile_profile(settings, SCHEMA), settings.claude_cli)
     if not reply.ok or reply.structured is None:
         raise RuntimeError(reply.error or "reconcile returned no structured result")
     edits = list(reply.structured.get("edits") or [])
@@ -234,8 +240,10 @@ def run_reconcile(settings: Settings, *, dry_run: bool = False) -> str:
     applied, skipped = apply_edits(settings, edits, facts)
     write_conflicts(settings, conflicts)
     message = report(applied, skipped, conflicts)
-    if message:
+    if not message:
+        return "Everything is consistent; nothing sent." if notify else "Everything is consistent."
+    if notify:
         from .surfaces.digest_send import send_dm
 
         send_dm(settings, message)
-    return message or "Everything is consistent; nothing sent."
+    return message

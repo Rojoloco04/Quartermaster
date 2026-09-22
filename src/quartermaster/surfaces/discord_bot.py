@@ -4,8 +4,10 @@ The bot is expected to sit in a normal server alongside other people, so who is
 talking decides which profile answers — and the profile, not a prompt rule,
 decides what can be reached. See ``agent.Profile``.
 
-Today only the owner profile is enabled, and only in DMs. The public profile
-exists, is wired in, and is switched off; turning it on means granting
+The owner profile answers the owner's DMs, and nobody else's. In a guild, a
+mention goes to the parser: moderation and Minecraft requests become plans that
+code executes, and anything else ("chat") is answered by the public profile,
+which has no tools, no vault and no session. Giving it more means granting
 capabilities to an empty list rather than removing access from a privileged
 agent, which is the only ordering that fails safe.
 
@@ -27,11 +29,30 @@ import discord
 from .. import agent
 from . import moderation
 from .chat import FRESH_NOTE, TurnLock, continue_or_fresh, describe_tool, lock_path, session_control
-from ..config import Settings, load_settings
+from ..config import Settings, current_prefs, load_settings
 
 log = logging.getLogger(__name__)
 
 CHUNK = 1900  # Discord's ceiling is 2000; leave room for fence repair.
+
+
+class HourlyQuota:
+    """At most ``limit`` uses per key in any rolling hour. In memory: a
+    restart forgives everyone, which is fine for a spend cap."""
+
+    def __init__(self, clock=time.monotonic):
+        self._clock = clock
+        self._uses: dict[int, list[float]] = {}
+
+    def allow(self, key: int, limit: int) -> bool:
+        now = self._clock()
+        recent = [t for t in self._uses.get(key, []) if now - t < 3600]
+        if len(recent) >= limit:
+            self._uses[key] = recent
+            return False
+        self._uses[key] = recent + [now]
+        return True
+
 
 def split_message(text: str, limit: int = CHUNK) -> list[str]:
     """Split a reply to fit Discord's message ceiling.
@@ -110,6 +131,7 @@ class Quartermaster(discord.Client):
         self._turn: asyncio.Task | None = None  # the running owner/public turn, for !stop
         self._fresh = False  # set by !new
         self._pending_asks: set[asyncio.Task] = set()  # approval DMs in flight
+        self._public_quota = HourlyQuota()
 
     async def setup_hook(self) -> None:
         self._heartbeat = asyncio.create_task(self._beat())
@@ -201,11 +223,10 @@ class Quartermaster(discord.Client):
 
         # Moderation in a guild channel. Anyone may ask; whether anything
         # happens is decided by their real Discord permissions, checked in code.
+        # Conversation there is answered by the public profile, once the parser
+        # has said it isn't an action. Nobody else gets DMs answered.
         if mentioned and message.guild is not None:
             return "moderation" if self.moderation_enabled else "moderation_off"
-
-        if mentioned and self.public.enabled:
-            return "public"
 
         return None
 
@@ -244,7 +265,8 @@ class Quartermaster(discord.Client):
             # Not under the busy lock: moderation waits on a human pressing a
             # button, and holding the lock for two minutes would block the
             # owner's DM thread behind it.
-            await moderation.handle(self.settings, message, self.user, prompt)
+            if not await moderation.handle(self.settings, message, self.user, prompt):
+                await self.answer_publicly(message, prompt)
             return
 
         # Commands are checked before the busy lock: !stop has to reach a turn
@@ -283,6 +305,26 @@ class Quartermaster(discord.Client):
             await channel.send(FRESH_NOTE)
             return True
         return False
+
+    async def answer_publicly(self, message: discord.Message, prompt: str) -> None:
+        """A guild mention that isn't an action: a plain reply from the public
+        profile (no tools, no vault). Not under the owner's busy lock, so a
+        friend's chat never makes a DM wait, and capped per person per hour
+        because it spends the owner's subscription."""
+        limit = int(current_prefs(self.settings).get("public", {}).get("replies_per_hour", 20))
+        if not self._public_quota.allow(message.author.id, limit):
+            log.info("public reply to %s (%s) skipped: over %d/hour", message.author, message.author.id, limit)
+            await message.channel.send("I've talked enough for one hour. Try me again later.")
+            return
+        async with message.channel.typing():
+            reply = await agent.ask(f"{message.author.display_name}: {prompt}", self.public, self.settings.claude_cli)
+        text = reply.text.strip() if reply.ok else ""
+        if not text:
+            log.warning("public reply failed: %s", reply.error or "empty")
+            await message.channel.send("I've got nothing right now. Try again in a bit.")
+            return
+        for part in split_message(text):
+            await message.channel.send(part)
 
     async def run_turn(self, channel: discord.abc.Messageable, prompt: str, profile: agent.Profile) -> None:
         # One turn at a time. Two concurrent turns would both resume the same

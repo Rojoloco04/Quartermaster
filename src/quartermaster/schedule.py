@@ -28,8 +28,9 @@ TIDY_TASK = "Quartermaster Claude Page Tidy"
 DIGEST_TASK = "Quartermaster Digest"
 PRESALE_TASK = "Quartermaster Presale Check"
 RECONCILE_TASK = "Quartermaster Reconcile"
+PUSH_TASK = "Quartermaster Vault Push"
 SERVICE_TASK = "Quartermaster Service"
-TASKS = (SERVICE_TASK, SYNC_TASK, TIDY_TASK, DIGEST_TASK, PRESALE_TASK, RECONCILE_TASK)
+TASKS = (SERVICE_TASK, SYNC_TASK, TIDY_TASK, DIGEST_TASK, PRESALE_TASK, RECONCILE_TASK, PUSH_TASK)
 
 # Before the presale check and the digest, so the stale-page scan reads a
 # mirror that is at most a day old.
@@ -47,6 +48,11 @@ PRESALE_HOUR = 8
 # digest, so the digest reads reconciled facts.
 RECONCILE_TIME = "07:30"
 
+# The git remote is the vault's only backup. Last thing in the day, after the
+# digest, so one commit carries the day's changes. The PC stays on, so a fixed
+# time is fine; a missed run is picked up by the next one.
+PUSH_TIME = "23:00"
+
 
 @dataclass(frozen=True)
 class ScheduledTask:
@@ -55,10 +61,11 @@ class ScheduledTask:
     schedule_args: list[str]
 
 
-def _qm_exe() -> str:
-    """The venv's qm.exe, resolved from the interpreter running this code -
-    the same executable `CLAUDE.md` tells the owner to run by hand."""
-    return str(Path(sys.executable).parent / "qm.exe")
+def _job(subcommand: str) -> list[str]:
+    """A timed job's command: the venv's pythonw, so no window opens (qm.exe is
+    a console program, and each run opened a Windows Terminal). ``cli.main``
+    re-runs itself with a hidden console for the programs a job starts."""
+    return [str(Path(sys.executable).with_name("pythonw.exe")), "-m", "quartermaster.cli", subcommand]
 
 
 def build_tasks(settings: Settings, digest_cadence: str) -> list[ScheduledTask]:
@@ -69,7 +76,6 @@ def build_tasks(settings: Settings, digest_cadence: str) -> list[ScheduledTask]:
     if digest_cadence not in ("daily", "weekly"):
         raise ValueError(f"digest_cadence must be 'daily' or 'weekly', got {digest_cadence!r}")
 
-    qm = _qm_exe()
     hour = int(settings.prefs["digest"]["hour"])
     weekday = str(settings.prefs["digest"]["weekday"])[:3].upper()
 
@@ -79,13 +85,14 @@ def build_tasks(settings: Settings, digest_cadence: str) -> list[ScheduledTask]:
         digest_schedule = ["/sc", "daily", "/st", f"{hour:02d}:00"]
 
     return [
-        ScheduledTask(SYNC_TASK, [qm, "sync"], ["/sc", "daily", "/st", f"{SYNC_HOUR:02d}:00"]),
-        ScheduledTask(TIDY_TASK, [qm, "tidy"], ["/sc", "weekly", "/d", TIDY_DAY, "/st", f"{TIDY_HOUR:02d}:00"]),
-        ScheduledTask(DIGEST_TASK, [qm, "digest"], digest_schedule),
+        ScheduledTask(SYNC_TASK, _job("sync"), ["/sc", "daily", "/st", f"{SYNC_HOUR:02d}:00"]),
+        ScheduledTask(TIDY_TASK, _job("tidy"), ["/sc", "weekly", "/d", TIDY_DAY, "/st", f"{TIDY_HOUR:02d}:00"]),
+        ScheduledTask(DIGEST_TASK, _job("digest"), digest_schedule),
         ScheduledTask(
-            PRESALE_TASK, [qm, "presale-check"], ["/sc", "daily", "/st", f"{PRESALE_HOUR:02d}:00"]
+            PRESALE_TASK, _job("presale-check"), ["/sc", "daily", "/st", f"{PRESALE_HOUR:02d}:00"]
         ),
-        ScheduledTask(RECONCILE_TASK, [qm, "reconcile"], ["/sc", "daily", "/st", RECONCILE_TIME]),
+        ScheduledTask(RECONCILE_TASK, _job("reconcile"), ["/sc", "daily", "/st", RECONCILE_TIME]),
+        ScheduledTask(PUSH_TASK, _job("push"), ["/sc", "daily", "/st", PUSH_TIME]),
     ]
 
 

@@ -69,6 +69,74 @@ class TestFormatting:
         assert "all day" in line and "(no title)" in line
 
 
+TUESDAY = {
+    "id": "e1", "summary": "Senior design interview",
+    "start": {"dateTime": "2026-09-22T19:00:00-05:00"}, "end": {"dateTime": "2026-09-22T20:00:00-05:00"},
+}
+
+
+class FakeEvents:
+    """events() of the Calendar client: get/patch/delete, each .execute()d."""
+
+    def __init__(self, event: dict):
+        self.event, self.calls = event, []
+
+    def _do(self, name, result, **kw):
+        self.calls.append((name, kw))
+        return type("Req", (), {"execute": lambda _self: result})()
+
+    def get(self, **kw):
+        return self._do("get", self.event, **kw)
+
+    def patch(self, **kw):
+        return self._do("patch", {**self.event, **kw["body"]}, **kw)
+
+    def delete(self, **kw):
+        return self._do("delete", "", **kw)
+
+
+@pytest.fixture
+def fake_calendar(settings, monkeypatch) -> FakeEvents:
+    events = FakeEvents(dict(TUESDAY))
+    monkeypatch.setattr(google, "resolve_accounts", lambda s, account, service: ["personal"])
+    monkeypatch.setattr(google, "_credentials", lambda s, label: None)
+    monkeypatch.setattr(google, "_calendar", lambda creds: type("Svc", (), {"events": lambda _self: events})())
+    return events
+
+
+class TestEditing:
+    def test_moving_only_the_start_keeps_the_length(self):
+        end = google.moved_end(TUESDAY, "2026-09-24T19:00:00-05:00")
+        assert end.startswith("2026-09-24T20:00")
+
+    def test_moving_an_all_day_event_keeps_its_days(self):
+        old = {"start": {"date": "2026-09-22"}, "end": {"date": "2026-09-24"}}
+        assert google.moved_end(old, "2026-10-01") == "2026-10-03"
+
+    def test_switching_all_day_to_timed_needs_both_ends(self):
+        with pytest.raises(GoogleError, match="both start and end"):
+            google.moved_end(TUESDAY, "2026-09-24")
+
+    def test_update_patches_only_what_changed(self, settings, fake_calendar):
+        out = google.update_event(settings, "e1", start="2026-09-24T19:00:00-05:00")
+        name, kw = fake_calendar.calls[-1]
+        assert name == "patch" and set(kw["body"]) == {"start", "end"} and "summary" not in kw["body"]
+        assert "Was:" in out and "2026-09-24" in out
+
+    def test_update_with_nothing_to_change_is_refused(self, settings, fake_calendar):
+        with pytest.raises(GoogleError, match="Nothing to change"):
+            google.update_event(settings, "e1")
+        assert all(name != "patch" for name, _ in fake_calendar.calls)
+
+    def test_delete_names_what_went(self, settings, fake_calendar):
+        out = google.delete_event(settings, "e1", calendar_id="cal-2")
+        assert ("delete", {"calendarId": "cal-2", "eventId": "e1"}) in fake_calendar.calls
+        assert "Senior design interview" in out and "trash" in out
+
+    def test_listing_shows_the_calendar_id_to_edit_with(self):
+        assert "calendar_id cal-2" in format_event(TUESDAY, "personal/School", "cal-2")
+
+
 class TestBodies:
     def test_prefers_plain_text(self):
         payload = {"mimeType": "multipart/alternative", "parts": [

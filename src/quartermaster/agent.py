@@ -101,7 +101,11 @@ _PATH_KEYS = {"Read": "file_path", "Write": "file_path", "Edit": "file_path", "G
 _PROTECTED = (".claude", ".mcp.json", ".git", ".githooks",
               # Written only through the qm server's queue_change tool, so every
               # entry is one tagged line the owner reviews before acting on it.
-              "90-System/dev-queue.md")
+              "90-System/dev-queue.md",
+              # Who may control the Minecraft server from Discord. Written only
+              # by a link proven in-game (or the owner by hand in /settings):
+              # an email must not be able to talk the agent into adding one.
+              "90-System/minecraft-links.md")
 
 DISCORD_STYLE = (
     "You are replying over Discord. Keep it short - a few sentences unless asked "
@@ -200,12 +204,25 @@ def owner_profile(settings: Settings) -> Profile:
     )
 
 
-def public_profile(settings: Settings) -> Profile:
-    """For other people in the server. Deliberately inert until built out.
+PUBLIC_ROLE = (
+    "You are Quartermaster, a bot in a Discord server of friends. Someone "
+    "@mentioned you with something that isn't a moderation or Minecraft request "
+    "(those are handled elsewhere, in plain words: \"delete the last 5 messages\", "
+    "\"who's on the minecraft server\"), so just talk: answer, joke back, be good "
+    "company. Match the channel's tone. You can't take actions (order things, "
+    "look things up, message people) and you have no access to your owner's "
+    "notes, calendar, email or anything personal: say so plainly if asked. The "
+    "message starts with who sent it."
+)
 
-    Note what is absent: no vault in ``cwd``, no file tools at all, and no shared
-    session. Turning this on is a matter of adding capabilities to an empty list,
-    not of removing access from a privileged agent — which is the only ordering
+
+def public_profile(settings: Settings) -> Profile:
+    """For other people in the server: conversation, nothing else.
+
+    Note what is absent: no vault in ``cwd``, no tools at all, no MCP servers
+    and no shared session. It answers guild mentions the parser classes as
+    "chat". Anything more is a matter of adding capabilities to an empty list,
+    not of removing access from a privileged agent, which is the only ordering
     that fails safe.
     """
     return Profile(
@@ -214,14 +231,9 @@ def public_profile(settings: Settings) -> Profile:
         tools=[],  # no built-ins at all
         allowed_tools=[],
         share_session=False,
-        system_append=(
-            DISCORD_STYLE
-            + " You are talking to someone who is not your owner. You have no "
-            "access to their notes or personal information and should say so "
-            "plainly if asked."
-        ),
-        max_turns=8,
-        enabled=False,
+        system_append=DISCORD_STYLE + " " + PUBLIC_ROLE,
+        max_turns=1,  # no tools, so one turn is the whole reply
+        timeout_seconds=60,
     )
 
 
@@ -240,7 +252,11 @@ def parser_profile(settings: Settings, schema: dict) -> Profile:
         tools=[],  # it reads a request and emits JSON; it needs nothing else
         allowed_tools=[],
         share_session=False,
-        max_turns=1,
+        # Structured output arrives as a StructuredOutput tool call; one that
+        # fails schema validation is retried in a second turn. At 1, that retry
+        # failed the whole request ("Reached maximum number of turns", 7 times
+        # in the log by 2026-09-22). Same allowance as reconcile.
+        max_turns=3,
         output_schema=schema,
         # Parsing English into JSON should take seconds. It also blocks a live
         # moderation request someone is waiting on in-channel, so it gets a

@@ -4,25 +4,23 @@ What exists and why. The rules here are binding: read this before changing
 anything. `docs/GUIDE.md` is how to use it (also served by `qm web`);
 `docs/ROADMAP.md` is what's planned and what was rejected.
 
-State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) under way: service wrapper done. 316 tests.
+State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) under way: service wrapper and vault push done. 389 tests.
 
 **Open right now**
-- Phase 5 infra: the service wrapper is done (2026-09-22). Left: scheduled vault
-  push, restic + a verified restore, Uptime Kuma (WSL2 + Docker, neither
-  installed yet), Tailscale. Only the side services go in Docker: the bot stays
+- Phase 5 infra: the service wrapper and the daily vault push are done
+  (2026-09-22); restic was dropped (the vault's git remote is its backup). Left:
+  Tailscale (piloting with a Minecraft server), Uptime Kuma (WSL2 + Docker,
+  neither installed yet; may not be worth it). Only the side services go in Docker: the bot stays
   native (a Linux container would split the shared session, whose folder is
   named after the vault's Windows path, and would need `procs`/`schedule` redone).
 - Last.fm is configured but the account started 2026-09-22 with 0 scrobbles, so
   it adds nothing until Spotify scrobbling fills it. Spotify stays until then
   (queued: remove it once Last.fm can replace it).
 - Not yet exercised live: `record_lesson` (correct the bot in a DM, check
-  `facts/lessons.md`) and a real (non-dry) `qm reconcile` run (first scheduled
-  07:30 2026-09-23; its dry run found two real conflicts).
-- Two obsolete vault files to delete (the permission classifier blocked it):
-  `Vault/90-System/pending.md` (nothing reads it; Discord Confirm replaced it)
-  and `Vault/digests/2026-09-21.md` (a run from before the API keys were set).
-- The vault repo has uncommitted changes (CLAUDE.md, dev queue, the synced
-  mirror); there's no scheduled vault push yet (Phase 5).
+  `facts/lessons.md`), `update_event`/`delete_event` from a DM, `reconcile_knowledge`
+  from a DM, and Minecraft started from a DM since the WMI launch (a terminal
+  `qm minecraft start` via WMI outlived its command and answered RCON,
+  2026-09-22), plus joining over Tailscale and the channel link flow.
 
 **Lessons** (`lessons.py`): the owner agent calls the `qm` server's
 `record_lesson` when corrected; a dated line lands in `facts/lessons.md`, and
@@ -39,7 +37,10 @@ changed mid-run or would lose >60%, and backs up the old version to
 `90-System/backups/reconcile/`. Conflicts overwrite `90-System/conflicts.md`
 (on /settings) and are DM'd as questions; `Profile.conflicts_file` puts them in
 every owner turn, so a plain answer is understood and propagated. Nothing found
-sends nothing. `check_tool` allows `StructuredOutput` for profiles with an
+sends nothing. On request from a DM, the `qm` server's `reconcile_knowledge`
+runs the same thing but returns the result into the turn instead of DMing it
+(`reconcile.reconcile(notify=False)`; async, because the MCP server's tools run
+on its event loop). `check_tool` allows `StructuredOutput` for profiles with an
 `output_schema`: denying it made the first live run loop to max_turns.
 
 Verified live on 2026-09-22: tool denial and path confinement, cancelling a turn
@@ -50,8 +51,11 @@ the digest with weather (dry run), `/brain` and `/settings` rendering, the
 Host-header refusal, `qm reconcile --dry-run`, `qm quit` (bot + web, language
 servers spared), a Notion sync removing 8 pages deleted in Notion,
 `propose_notion_delete` confirmed from a DM (the Quartermaster page, trashed),
-`sync_notion` from a DM, and a /settings preference edit in the browser
-(`chat.fresh_after_minutes` 5 to 10, picked up without a restart).
+`sync_notion` from a DM, a /settings preference edit in the browser
+(`chat.fresh_after_minutes` 5 to 10, picked up without a restart), and a real
+`qm reconcile` whose DM'd conflict (had tickets for a match been bought?) was
+answered in plain words, fixed in `facts/plans.md` and cleared from
+`conflicts.md`.
 
 ## Working here
 
@@ -100,7 +104,7 @@ is enabled per clone with `git config core.hooksPath .githooks`.
 
 ```
 src/quartermaster/
-├── cli.py            qm doctor/init/sync/bot/web/serve/digest/presale-check/reconcile/quit/restart/schedule/mute/auth/mcp
+├── cli.py            qm doctor/init/sync/bot/web/serve/digest/presale-check/reconcile/push/quit/restart/schedule/mute/auth/mcp
 ├── config.py         secrets from .env, preferences from the vault's 90-System/config.toml
 ├── agent.py          Agent SDK wrapper; Profile + check_tool are the security boundary
 ├── db.py             state.db — machine state only, rebuildable
@@ -111,17 +115,19 @@ src/quartermaster/
 ├── claude_tidy.py    weekly: propose a Claude page with the stale parts removed
 ├── reconcile.py      daily: dedupe/tidy facts + lessons, write and DM conflicts
 ├── lessons.py        facts/lessons.md: corrections, read into every owner turn and digest
+├── vault_push.py     daily: commit the whole vault and push it (its only backup); never forces
 ├── procs.py          `qm quit`/`restart`, the `qm serve` supervisor, the one-instance locks
 ├── schedule.py       Windows Task Scheduler wiring (schtasks.exe)
 ├── discord_ops.py    OpsPlan, permissions, hierarchy, matching (pure, well-tested)
 ├── integrations/     google, microsoft, spotify (OAuth; shared accounts.py),
 │                     notion (REST), claude_page (scoped writes), ticketmaster,
-│                     prices, lastfm, weather (Open-Meteo)
+│                     prices, lastfm, weather (Open-Meteo), minecraft (Paper over RCON)
 ├── servers/          MCP servers over stdio (`qm mcp <name>`); shared helpers in __init__
 ├── dev_queue.py      the owner's queue of changes to this code (worked in Claude Code)
 └── surfaces/         discord_bot (routing, streaming), chat (what DM and web chat share:
                       stop/start-fresh, status wording, the cross-process TurnLock), moderation
-                      (preview/confirm/execute), digest_send (one-shot DM), web (qm web),
+                      (preview/confirm/execute), minecraft_chat (the server from a channel,
+                      op-gated), digest_send (one-shot DM), web (qm web),
                       brain (the /brain graph of the vault)
 vault-template/       copied into a new vault by `qm init`
 ```
@@ -168,7 +174,15 @@ output's tail if one exits within 4s. Live-verified 2026-09-22.
 
 **Scheduled tasks** (logged-in only): the service at logon, Notion sync 07:00 daily, reconcile 07:30
 daily, presale check 08:00 daily, Claude page tidy Sundays 09:00, digest at
-`digest.hour` daily or weekly. Re-run `qm schedule
+`digest.hour` daily or weekly, vault push 23:00 daily. Each is registered as
+`pythonw -m quartermaster.cli <job>`, never `qm.exe` (a console program: every
+run opened a Windows Terminal, noticed at the 2026-09-22 18:00 digest); under
+pythonw, `cli.main` re-runs the job once as python.exe with `CREATE_NO_WINDOW`,
+so claude.exe, git and schtasks share one hidden console instead of each
+opening a window. Live-verified with the push task. The push is the vault's
+backup (restic was dropped): `git add -A`, commit, push, with prompts disabled
+so a credential problem fails instead of hanging; it refuses a detached HEAD or
+a merge/rebase in progress and never forces. Re-run `qm schedule
 install` after changing `schedule.py` — the sync task only exists once it has
 been re-installed (it was first registered 2026-09-22 and had never fired, which
 is why pages deleted in Notion lingered).
@@ -201,8 +215,8 @@ pipe and vanished once already.
 | `cwd` | vault | `workspace("public")` | `workspace("public")` | `workspace("digest")` |
 | `tools` | vault + research + Skill | `[]` | `[]` | `[]` |
 | MCP | google, microsoft, spotify, qm | none | none | none |
-| session | shared with CLI | separate | none | none |
-| enabled | yes | **no** | yes | yes |
+| session | shared with CLI | none (one turn per mention) | none | none |
+| enabled | yes | yes (guild chat only) | yes | yes |
 
 Containment is enforced three ways, because each alone has leaked:
 
@@ -235,6 +249,17 @@ tool: it emits a structured `OpsPlan`; code checks the invoker's real Discord
 permission in that channel, role hierarchy both ways, gathers matches, confirms
 (destructive only), executes. The model is never consulted after parsing, so
 channel text can at worst produce a plan a human declines.
+
+Every guild mention goes through the parser (Haiku, `max_turns=3`: at 1, a
+StructuredOutput retry failed the request). Besides the Discord actions it
+emits `minecraft` (see Minecraft) and `chat` for anything that isn't an action;
+before `chat` existed, non-actions fell back to `count` and got a message
+preview. `moderation.handle` returns False for chat and the bot answers with
+the public profile (`answer_publicly`): no tools, no vault, no MCP, prompt
+prefixed with the sender's name, outside the owner's busy lock, and capped at
+`public.replies_per_hour` per person (`HourlyQuota`, in memory, read fresh)
+because friends' chat spends the owner's subscription. Non-owner DMs are still
+ignored.
 
 Deliberate — don't "fix":
 - Limits clamp at 200; a ban keeps message history unless asked; an ambiguous
@@ -309,6 +334,47 @@ for that change is the live one. Losing a proposal is worse than a duplicate.
 rewrites the Claude page without its stale parts and *proposes* the replace. A
 rewrite that would cut the page by more than 60% is dropped rather than shown -
 a tidy prunes, it doesn't gut. The Notion integration needs "Insert content".
+
+## Minecraft (`integrations/minecraft.py`)
+
+A Paper server friends reach over Tailscale, managed from DMs through the `qm`
+server's `minecraft_*` tools and from the terminal with `qm minecraft`. It lives
+outside both repos (`%LOCALAPPDATA%\quartermaster\minecraft`). Deliberate:
+- The model never gets a console: `minecraft_command` goes over RCON and only
+  `ALLOWED_COMMANDS` (no `op`, `execute`, `function`, `reload`; `stop` has its
+  own tool). The owner agent reads email, so this list is the boundary.
+- Setup takes the newest version with a **STABLE** build (Paper's newest is
+  often ALPHA), verifies the jar's sha256, and refuses an older Java with the
+  winget line to fix it. It needs `--accept-eula`: that's the owner agreeing to
+  Mojang's EULA, which code must not do on their behalf.
+- Whitelist on, `online-mode` on, RCON password random. RCON is reached on
+  127.0.0.1; the firewall rule opens only 25565, only to 100.64.0.0/10.
+- The server is launched through WMI (`Win32_Process.Create`), so the WMI
+  service is its parent and it belongs to no job of ours: the first live start
+  used Popen + `CREATE_BREAKAWAY_FROM_JOB` and died with the owner turn whose
+  MCP server started it. It runs as `cmd /c java ... > console.out 2>&1`; the
+  pid file holds that cmd. `procs.ours` matches neither, so `qm quit` leaves it
+  running. Status is the pid file + tasklist, then RCON.
+- `qm minecraft op <name>` (whitelist + op) is terminal-only on purpose: it's
+  how the owner grants op without `op` ever being in `ALLOWED_COMMANDS`.
+- **In guild channels** (`surfaces/minecraft_chat.py`) it rides the moderation
+  path: the parser emits `OpsPlan(action="minecraft", minecraft_op=...)` and
+  `moderation.handle` hands it over before any Discord permission check.
+  status/link/verify: anyone. start/stop/command: the owner, or a member whose
+  linked name is in the server's `ops.json` right now (`may_control`); commands
+  still pass `ALLOWED_COMMANDS`, ops included. stop confirms.
+- **`/servers`** in `qm web`: a tab per entry in `integrations/game_servers.GAMES`
+  (a game = a module with `status/start/stop/is_running/log_path`; the next game
+  is its module plus one line there). Status polled every 10s, Start/Stop behind
+  the CSRF header, the console (`console.out`, truncated per start, ANSI
+  stripped) tailed like the main log, cleared when a new run truncates it.
+  Read in whole lines so a game's `LOG_NOISE` regex can drop lines: the status
+  poll is an RCON call, and Paper logs every RCON connect and disconnect.
+- **Links** (`90-System/minecraft-links.md`, `id: name` lines) are proven, not
+  claimed: "link me to X" needs X online, whispers X a 6-digit code bound to
+  the asker's Discord id (10 min, 5 tries, in memory), and "verify <code>"
+  writes the link. The file is on `_PROTECTED` (an email must not get the
+  owner agent to grant control) and editable in /settings.
 
 ## Mutes
 
@@ -424,7 +490,10 @@ All MCP-exposed via `qm mcp <name>`; the owner profile passes them to the SDK an
 `claude`. Tokens: `%LOCALAPPDATA%\quartermaster\tokens\<service>-<label>.json`,
 outside both repos.
 
-- **Google** — Calendar read/write, Gmail **read-only by scope**. Accounts carry
+- **Google** — Calendar read/write (create, `update_event` patches only the
+  fields given and keeps the length when only the start moves, `delete_event`;
+  `list_events` prints each event's `calendar_id` so the model can target a
+  non-primary calendar), Gmail **read-only by scope**. Accounts carry
   only the services granted on the consent screen.
 - **Microsoft To Do** — MSAL public client, tenant `consumers`, `Tasks.ReadWrite`.
   Azure app: "Mobile and desktop applications", redirect `http://localhost`.
