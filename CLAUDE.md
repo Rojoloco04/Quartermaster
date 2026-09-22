@@ -320,11 +320,12 @@ because the log and transcripts hold DMs and email snippets.
 **`/settings` is the one place it writes files directly** (`/chat` runs owner
 turns, see Session sharing). The owner wants every configuration
 visible and editable without opening the vault: preferences in force (defaults
-merged with `config.toml`, read fresh, each marked yours/default), `.env` keys
+merged with `config.toml`, read fresh; no yours/default tag, since the template
+config sets nearly everything and the tag said nothing), `.env` keys
 as set/not set (never values, never editable), and in-place editors for
 `config.toml`, `CLAUDE.md`, `muted.md`, `dev-queue.md` and `facts/*.md` (also
-from the brain panel). Each scalar `table.key` preference also has its own
-Change button (`web.set_pref`): a line-level edit of `config.toml` that keeps
+from the brain panel). Clicking a scalar `table.key` preference's value edits
+just that one (`web.set_pref`): a line-level edit of `config.toml` that keeps
 comments, types the value like its current one, and is re-parsed to confirm it
 landed. `chat.*` is read fresh each turn (`config.current_prefs`), so it needs
 no restart; other preferences still do. `web.EDITABLE` is the whole writable set; the Notion

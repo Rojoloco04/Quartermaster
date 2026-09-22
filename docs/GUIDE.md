@@ -84,13 +84,12 @@ targets exactly that message.
   scheduled jobs, recent turns with cost, the live conversation, a live log,
   digests and mutes.
 - **Settings** (http://127.0.0.1:8766/settings) shows everything Quartermaster
-  runs on and lets you change it in place: the preferences in force (yours vs
-  default), what it knows (`facts/`, including lessons), the agent's
+  runs on and lets you change it in place: the preferences in force, what it knows (`facts/`, including lessons), the agent's
   instructions, mutes and the dev queue. Secrets show only as set or not set.
   Click Edit, change it, Save (or Ctrl+S). A save is refused if the agent
   changed the file after you opened it, and preferences must be valid TOML.
-  Each preference also has a Change button: type the value, Enter saves it into
-  `config.toml` (comments kept), Esc cancels. Lists (the distance bands) are
+  Click a preference's value to change it: Enter saves it into `config.toml`
+  (comments kept), Esc cancels. Lists (the distance bands) are
   edited in the file.
 - **Lessons**: tell the bot it got something wrong, in any words, and it records
   the rule in `facts/lessons.md`. Every later reply and digest follows it. Fix

@@ -503,8 +503,7 @@ EDIT_CSS = """
   background:var(--bg); color:var(--fg); font:12.5px/1.5 ui-monospace, Consolas, monospace; resize:vertical }
 .view { overflow-wrap:anywhere } .view h2 { font-size:14px; text-transform:none; letter-spacing:0; color:var(--fg) }
 .msg { font-size:12px } .note { color:var(--muted); font-size:12.5px; margin:0 0 8px }
-td.v { font:12px ui-monospace, Consolas, monospace; overflow-wrap:anywhere } .tag { font-size:11px; color:var(--muted) }
-.tag.yours { color:var(--accent) }
+td.v { font:12px ui-monospace, Consolas, monospace; overflow-wrap:anywhere }
 """
 
 # Shared by /settings and the brain's note panel: any .file block becomes
@@ -548,37 +547,40 @@ document.addEventListener('keydown', ev => {
 
 
 PREF_CSS = """
-#prefs button { font:inherit; font-size:11px; padding:1px 8px; border-radius:5px; cursor:pointer; margin-left:6px;
-  border:1px solid var(--line); background:var(--code); color:var(--fg) }
+#prefs td.v[data-pref] { cursor:text; border-radius:4px }
+#prefs td.v[data-pref]:hover { background:var(--code); box-shadow:inset 0 0 0 1px var(--line) }
 #prefs input { width:100%; box-sizing:border-box; padding:3px 6px; border:1px solid var(--accent); border-radius:5px;
   background:var(--bg); color:var(--fg); font:12px ui-monospace, Consolas, monospace }
+#prefs .msg { display:block; margin-top:3px; font-family:inherit }
 """
 
-# One preference at a time: Enter saves into config.toml (comments kept), Esc
-# cancels. The page reloads after a save so the table, the file and its hash agree.
+# Click a value to change it: Enter saves into config.toml (comments kept), Esc
+# or clicking away cancels. The page reloads after a save so the table, the file
+# and its hash agree.
 PREF_JS = r"""
 document.addEventListener('click', ev => {
-  const b = ev.target.closest('[data-pref]');
-  if (!b) return;
-  const row = b.closest('tr'), cell = row.querySelector('td.v');
-  if (cell.querySelector('input')) return;
-  const orig = cell.textContent, input = document.createElement('input');
+  const cell = ev.target.closest('td[data-pref]');
+  if (!cell || cell.querySelector('input')) return;
+  const orig = cell.textContent, input = document.createElement('input'), msg = document.createElement('span');
   input.value = orig.startsWith('"') ? JSON.parse(orig) : orig;
-  cell.textContent = ''; cell.append(input); input.focus(); input.select();
-  const msg = document.createElement('span'); msg.className = 'msg'; b.after(msg);
-  const done = () => { cell.textContent = orig; msg.remove(); };
+  msg.className = 'msg';
+  cell.textContent = ''; cell.append(input, msg); input.focus(); input.select();
+  let saving = false;
+  const done = () => { if (!saving) cell.textContent = orig; };
+  input.addEventListener('blur', done);
   input.addEventListener('keydown', async e => {
     if (e.key === 'Escape') return done();
-    if (e.key !== 'Enter') return;
-    msg.className = 'msg muted'; msg.textContent = ' Saving…';
+    if (e.key !== 'Enter' || saving) return;
+    saving = true; msg.className = 'msg muted'; msg.textContent = 'Saving…';
     let r = null, d = {};
     try {
       r = await fetch('/api/pref', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-QM-CSRF': QM_CSRF},
-        body: JSON.stringify({key: row.dataset.key, value: input.value, hash: document.getElementById('prefs').dataset.hash})});
+        body: JSON.stringify({key: cell.closest('tr').dataset.key, value: input.value,
+                              hash: document.getElementById('prefs').dataset.hash})});
       d = await r.json();
     } catch (err) { d = {error: 'Save failed: ' + err}; }
-    if (!r || !r.ok) { msg.className = 'msg bad'; msg.textContent = ' ' + (d.error || 'Save failed.'); return; }
-    location.reload();
+    if (r && r.ok) return location.reload();
+    saving = false; msg.className = 'msg bad'; msg.textContent = d.error || 'Save failed.'; input.focus();
   });
 });
 """
@@ -626,11 +628,10 @@ def _fact_title(path: Path) -> str:
 def settings_page(settings: Settings, csrf: str) -> str:
     vault = settings.vault
     prefs = "".join(
-        f"<tr data-key='{_e(key)}'><td><code>{_e(key)}</code></td><td class='v'>{_e(value)}</td>"
-        f"<td><span class='tag{' yours' if yours else ''}'>{'yours' if yours else 'default'}</span>"
-        + ("" if value.startswith(("[", "{")) or key.count(".") != 1 else " <button type='button' data-pref>Change</button>")
-        + "</td></tr>"
-        for key, value, yours in effective_prefs(vault)
+        f"<tr data-key='{_e(key)}'><td><code>{_e(key)}</code></td><td class='v'"
+        + ("" if value.startswith(("[", "{")) or key.count(".") != 1 else " data-pref title='Click to change'")
+        + f">{_e(value)}</td></tr>"
+        for key, value, _ in effective_prefs(vault)
     )
     config_hash = file_hash(vault / "90-System" / "config.toml")
     env = "".join(
@@ -644,11 +645,11 @@ def settings_page(settings: Settings, csrf: str) -> str:
     return page("Settings", f"""
 <section><h2>How changes apply</h2><p class="note" style="margin:0">Everything Quartermaster runs on is on this page.
 Instructions, facts and lessons apply from the next message. Preferences apply to scheduled jobs on their next run
-and to the bot after a restart, except <code>chat.*</code>, which applies from the next message. Change one with its
-button (Enter saves, Esc cancels). A save is refused if the agent changed the file since you opened it. Notion pages
+and to the bot after a restart, except <code>chat.*</code>, which applies from the next message. Click a value to change
+it (Enter saves, Esc cancels). A save is refused if the agent changed the file since you opened it. Notion pages
 are edited in Notion: the mirror is overwritten on every sync.</p></section>
-<section><h2>Preferences in force</h2><table id="prefs" data-hash="{config_hash}"><tr><th>Setting</th><th>Value</th><th></th></tr>{prefs}</table>
-{file_block(vault, "90-System/config.toml", "Edit preferences", "Only what you set here overrides the defaults above. Saved only if it parses.")}</section>
+<section><h2>Preferences in force</h2><table id="prefs" data-hash="{config_hash}"><tr><th>Setting</th><th>Value</th></tr>{prefs}</table>
+{file_block(vault, "90-System/config.toml", "Edit preferences", "The whole file, for lists like the distance bands. Saved only if it parses.")}</section>
 <section><h2>Conflicts</h2>{file_block(vault, "90-System/conflicts.md", "Where what it knows disagrees", "Found by the daily reconcile (<code>qm reconcile</code>). Answer in a DM and every file gets updated, or fix it yourself and delete the entry.")}</section>
 <section><h2>What it knows</h2>{fact_blocks}</section>
 <section><h2>Instructions</h2>{file_block(vault, "CLAUDE.md", "How the agent works in your vault", "Loaded at the start of every conversation and into every digest.")}</section>
