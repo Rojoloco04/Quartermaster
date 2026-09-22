@@ -14,10 +14,11 @@ from quartermaster.surfaces import web
 @pytest.fixture
 def settings(tmp_path: Path, monkeypatch) -> Settings:
     monkeypatch.setattr(Settings, "log_path", property(lambda self: tmp_path / "logs" / "quartermaster.log"))
-    (tmp_path / "Vault" / "90-System").mkdir(parents=True)
+    (tmp_path / "Vault" / "System").mkdir(parents=True)
     (tmp_path / "mc").mkdir()
     return Settings(vault=tmp_path / "Vault",
-                    prefs={**DEFAULTS, "minecraft": {"dir": str(tmp_path / "mc"), "memory_gb": 4}})
+                    prefs={**DEFAULTS, "minecraft": {"dir": str(tmp_path / "mc"), "memory_gb": 4},
+                           "satisfactory": {"dir": str(tmp_path / "sf")}})
 
 
 @pytest.fixture

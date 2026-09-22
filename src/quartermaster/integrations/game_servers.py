@@ -5,7 +5,7 @@ A game is a module in ``integrations`` exposing ``status``, ``start``,
 ``stop``, ``is_running`` and ``log_path`` (all taking ``Settings``) and raising
 its own ``RuntimeError`` subclass for anything the owner should read, plus
 optionally ``LOG_NOISE``, a regex for console lines not worth showing. Adding a
-game (Satisfactory next) is its module plus one line in ``GAMES``.
+game is its module plus one line in ``GAMES``.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import re
 from dataclasses import dataclass
 from types import ModuleType
 
-from . import minecraft
+from . import minecraft, satisfactory
 
 
 @dataclass(frozen=True)
@@ -26,6 +26,7 @@ class Game:
 
 GAMES: dict[str, Game] = {g.key: g for g in (
     Game("minecraft", "Minecraft (Paper)", minecraft),
+    Game("satisfactory", "Satisfactory", satisfactory),
 )}
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")

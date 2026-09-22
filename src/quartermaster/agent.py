@@ -101,11 +101,11 @@ _PATH_KEYS = {"Read": "file_path", "Write": "file_path", "Edit": "file_path", "G
 _PROTECTED = (".claude", ".mcp.json", ".git", ".githooks",
               # Written only through the qm server's queue_change tool, so every
               # entry is one tagged line the owner reviews before acting on it.
-              "90-System/dev-queue.md",
+              "System/dev-queue.md",
               # Who may control the Minecraft server from Discord. Written only
               # by a link proven in-game (or the owner by hand in /settings):
               # an email must not be able to talk the agent into adding one.
-              "90-System/minecraft-links.md")
+              "System/minecraft-links.md")
 
 DISCORD_STYLE = (
     "You are replying over Discord. Keep it short - a few sentences unless asked "

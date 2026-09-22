@@ -17,7 +17,7 @@ def settings(tmp_path: Path) -> Settings:
     v = tmp_path / "Vault"
     (v / "facts").mkdir(parents=True)
     (v / "notion" / "lifestyle").mkdir(parents=True)
-    (v / "90-System").mkdir()
+    (v / "System").mkdir()
     (v / "facts" / "plans.md").write_text(
         "# Plans\n\n- 9/29: the concert. Still has to buy tickets.\n- 10/3: dinner.\n"
         "- 10/3: dinner at the usual place.\n- 8/1: something long past.\n", "utf-8")

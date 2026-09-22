@@ -3,7 +3,7 @@
 Two sources, deliberately separated:
 
 - ``.env`` in the repo holds secrets. Gitignored, never committed.
-- ``90-System/config.toml`` in the vault holds preferences. Committed to the
+- ``System/config.toml`` in the vault holds preferences. Committed to the
   vault's own repo, hand-editable, and the thing you actually tune.
 
 Anything you would be upset to leak goes in the first. Anything you would want
@@ -83,6 +83,13 @@ DEFAULTS: dict = {
         # Where the server lives. Blank: the per-user data dir, outside both repos.
         "dir": "",
     },
+    "satisfactory": {
+        # The name the server claims itself with, shown in the game's Server Manager.
+        "server_name": "Quartermaster",
+        # Where SteamCMD and the server install live. Blank: the per-user data
+        # dir. Saves stay in %LOCALAPPDATA%\FactoryGame (the game decides).
+        "dir": "",
+    },
 }
 
 
@@ -136,7 +143,7 @@ class Settings:
 
     @property
     def system_dir(self) -> Path:
-        return self.vault / "90-System"
+        return self.vault / "System"
 
     @property
     def muted_file(self) -> Path:
@@ -219,7 +226,7 @@ def load_settings(vault_override: Path | None = None) -> Settings:
     vault = Path(vault_raw).expanduser()
 
     prefs = DEFAULTS
-    config_file = vault / "90-System" / "config.toml"
+    config_file = vault / "System" / "config.toml"
     if config_file.exists():
         with config_file.open("rb") as fh:
             prefs = _deep_merge(DEFAULTS, tomllib.load(fh))

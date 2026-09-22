@@ -31,7 +31,7 @@ def vault(tmp_path: Path) -> Path:
         note(f"facts/f{i}.md", f"# Fact {i}\n\nNotes notes notes.\n")
     # Working material, not knowledge: none of these are nodes.
     for rel in ("facts/README.md", "notion/README.md", "digests/2026-09-21.md", "inbox/idea.md",
-                "90-System/muted.md", "CLAUDE.md", ".claude/settings.md", "notion-backups/old.md"):
+                "System/muted.md", "CLAUDE.md", ".claude/settings.md", "notion-backups/old.md"):
         note(rel, "# Not knowledge\n\n[[Gaming]] Cooking\n")
     return v
 

@@ -13,11 +13,11 @@ from quartermaster.surfaces import web
 @pytest.fixture
 def vault(tmp_path: Path) -> Path:
     v = tmp_path / "Vault"
-    (v / "90-System").mkdir(parents=True)
+    (v / "System").mkdir(parents=True)
     (v / "facts").mkdir()
     (v / "notion").mkdir()
-    (v / "90-System" / "config.toml").write_text('[digest]\nhour = 7\n', "utf-8")
-    (v / "90-System" / "muted.md").write_text("# Muted\n\nartist/Tool\n", "utf-8")
+    (v / "System" / "config.toml").write_text('[digest]\nhour = 7\n', "utf-8")
+    (v / "System" / "muted.md").write_text("# Muted\n\nartist/Tool\n", "utf-8")
     (v / "facts" / "about.md").write_text("# About the owner\n\n- Drives a hatchback.\n", "utf-8")
     (v / "notion" / "page-12345678.md").write_text("# Mirror\n", "utf-8")
     (v / "CLAUDE.md").write_text("# Quartermaster\n", "utf-8")
@@ -35,11 +35,11 @@ def csrf_of(html: str) -> str:
 
 
 def test_only_config_and_facts_are_editable(vault):
-    for rel in ("CLAUDE.md", "90-System/config.toml", "90-System/muted.md", "90-System/dev-queue.md",
+    for rel in ("CLAUDE.md", "System/config.toml", "System/muted.md", "System/dev-queue.md",
                 "facts/about.md", "facts/lessons.md"):
         assert web.editable_path(vault, rel), rel
     for rel in ("notion/page-12345678.md", "digests/x.md", "inbox/x.md", ".mcp.json", ".claude/settings.json",
-                "facts/../.mcp.json", "facts/sub/x.md", "90-System/state.db", "../outside.md"):
+                "facts/../.mcp.json", "facts/sub/x.md", "System/state.db", "../outside.md"):
         assert web.editable_path(vault, rel) is None, rel
 
 
@@ -50,12 +50,12 @@ def test_save_refuses_stale_edits_and_bad_toml(vault):
     with pytest.raises(web.EditRefused, match="changed since"):
         web.save_file(vault, "facts/about.md", "# About\n", loaded)
 
-    toml = vault / "90-System" / "config.toml"
+    toml = vault / "System" / "config.toml"
     with pytest.raises(web.EditRefused, match="doesn't parse"):
-        web.save_file(vault, "90-System/config.toml", "[digest\nhour = ", web.file_hash(toml))
+        web.save_file(vault, "System/config.toml", "[digest\nhour = ", web.file_hash(toml))
     assert "hour = 7" in toml.read_text("utf-8")
 
-    new = web.save_file(vault, "90-System/config.toml", "[digest]\r\nhour = 9", web.file_hash(toml))
+    new = web.save_file(vault, "System/config.toml", "[digest]\r\nhour = 9", web.file_hash(toml))
     assert toml.read_text("utf-8") == "[digest]\nhour = 9\n" and new == web.file_hash(toml)
     # A new fact file: nothing loaded, so the expected hash is empty.
     web.save_file(vault, "facts/cars.md", "# Cars\n", "")
@@ -69,7 +69,7 @@ def test_effective_prefs_mark_what_you_set(vault):
 
 
 def test_set_pref_edits_one_value_and_keeps_comments(vault):
-    toml = vault / "90-System" / "config.toml"
+    toml = vault / "System" / "config.toml"
     toml.write_text("# mine\n[digest]\nhour = 7  # evenings\n\n[home]\nlabel = \"STL\"\n", "utf-8")
     web.set_pref(vault, "digest.hour", "9", web.file_hash(toml))
     # A default not in the file yet: a new section is added at the end.
@@ -84,7 +84,7 @@ def test_set_pref_edits_one_value_and_keeps_comments(vault):
 
 
 def test_set_pref_refuses_wrong_types_lists_and_stale_hashes(vault):
-    toml = vault / "90-System" / "config.toml"
+    toml = vault / "System" / "config.toml"
     h = web.file_hash(toml)
     with pytest.raises(web.EditRefused, match="whole number"):
         web.set_pref(vault, "digest.hour", "evening", h)
@@ -100,7 +100,7 @@ def test_set_pref_refuses_wrong_types_lists_and_stale_hashes(vault):
 def test_pref_endpoint_needs_the_page_token(client, vault):
     html = client.get("/settings").text
     assert "data-pref" in html
-    toml = vault / "90-System" / "config.toml"
+    toml = vault / "System" / "config.toml"
     body = {"key": "chat.fresh_after_minutes", "value": "15", "hash": web.file_hash(toml)}
     assert client.post("/api/pref", json=body).status_code == 403
     assert client.post("/api/pref", json=body, headers={"X-QM-CSRF": csrf_of(html)}).status_code == 200
@@ -111,7 +111,7 @@ def test_chat_pref_is_read_fresh_each_turn(vault):
     from quartermaster.config import current_prefs
     s = Settings(vault=vault, prefs=DEFAULTS)
     assert current_prefs(s)["chat"]["fresh_after_minutes"] == 5
-    (vault / "90-System" / "config.toml").write_text("[chat]\nfresh_after_minutes = 0\n", "utf-8")
+    (vault / "System" / "config.toml").write_text("[chat]\nfresh_after_minutes = 0\n", "utf-8")
     assert current_prefs(s)["chat"]["fresh_after_minutes"] == 0
 
 
@@ -125,15 +125,15 @@ def test_secrets_show_set_or_not_never_values(monkeypatch):
 def test_settings_page_shows_everything_but_secret_values(client, monkeypatch):
     monkeypatch.setenv("NOTION_TOKEN", "ntn_supersecret")
     html = client.get("/settings").text
-    for expected in ("digest.hour", "About the owner", "facts/lessons.md", "artist/Tool", "90-System/dev-queue.md", "NOTION_TOKEN"):
+    for expected in ("digest.hour", "About the owner", "facts/lessons.md", "artist/Tool", "System/dev-queue.md", "NOTION_TOKEN"):
         assert expected in html, expected
     assert "ntn_supersecret" not in html
 
 
 def test_save_endpoint_needs_the_page_token(client, vault):
     csrf = csrf_of(client.get("/settings").text)
-    path = vault / "90-System" / "muted.md"
-    body = {"path": "90-System/muted.md", "text": "# Muted\n\nartist/Tool\nprice:abc\n", "hash": web.file_hash(path)}
+    path = vault / "System" / "muted.md"
+    body = {"path": "System/muted.md", "text": "# Muted\n\nartist/Tool\nprice:abc\n", "hash": web.file_hash(path)}
     assert client.post("/api/file", json=body).status_code == 403
     assert client.post("/api/file", json=body, headers={"X-QM-CSRF": "guess"}).status_code == 403
     r = client.post("/api/file", json=body, headers={"X-QM-CSRF": csrf})

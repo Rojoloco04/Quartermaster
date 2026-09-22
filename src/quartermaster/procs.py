@@ -134,6 +134,31 @@ def start_detached(subcommand: str, out_path: Path) -> subprocess.Popen:
             return subprocess.Popen(_qm() + [subcommand], creationflags=flags, **kwargs)
 
 
+# Win32_Process.Create: the new process is made by the WMI service, so it
+# belongs to no job of ours. Popen with CREATE_BREAKAWAY_FROM_JOB wasn't
+# enough: the first live Minecraft start died with the owner turn that ran the
+# tool. Game servers start this way.
+_WMI_CREATE = (
+    "$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}; "
+    "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments "
+    "@{CommandLine=$env:QM_CMDLINE; CurrentDirectory=$env:QM_CWD; ProcessStartupInformation=$si}; "
+    "\"$($r.ReturnValue) $($r.ProcessId)\""
+)
+
+
+def launch_outside_jobs(cmdline: str, cwd: Path) -> int:
+    """Start ``cmdline`` hidden, parented by WMI, and return its pid. Nothing of
+    ours (a turn, ``qm quit``, a closed terminal) takes it down."""
+    out = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", _WMI_CREATE],
+        capture_output=True, text=True, env={**os.environ, "QM_CMDLINE": cmdline, "QM_CWD": str(cwd)},
+    )
+    code, _, pid = out.stdout.strip().partition(" ")
+    if out.returncode != 0 or code != "0" or not pid.isdigit():
+        raise RuntimeError(f"Windows wouldn't start the server: {(out.stderr or out.stdout).strip()[:300]}")
+    return int(pid)
+
+
 def _tail(path: Path, lines: int = 5) -> list[str]:
     try:
         return path.read_text(encoding="utf-8", errors="replace").strip().splitlines()[-lines:]

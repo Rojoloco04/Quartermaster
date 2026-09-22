@@ -6,8 +6,9 @@ anything. `docs/GUIDE.md` is how to use it (also served by `qm web`);
 
 State as of 2026-09-22: Phases 1–5 done (Phase 5: service wrapper, daily vault
 push, Tailscale; restic and Uptime Kuma dropped; a fresh clone of the vault
-remote matched the local vault). Next: a Satisfactory server beside Minecraft
-(`integrations/game_servers.py`), then the Phase 6+ extensions. 389 tests.
+remote matched the local vault). A Satisfactory server beside Minecraft
+(`integrations/satisfactory.py`, live 2026-09-22), then the Phase 6+ extensions. 404 tests.
+The vault's system folder is `System/` (was `90-System/` until 2026-09-22).
 
 **Open right now**
 - The bot stays native, not in Docker: a Linux container would split the shared
@@ -37,7 +38,7 @@ place that states it (and proposes a Notion edit if Notion is wrong). Daily at
 lessons and the non-empty Notion mirror (~20k tokens) and returns edits and
 conflicts. Code applies edits only to existing `facts/*.md`, skips a file that
 changed mid-run or would lose >60%, and backs up the old version to
-`90-System/backups/reconcile/`. Conflicts overwrite `90-System/conflicts.md`
+`System/backups/reconcile/`. Conflicts overwrite `System/conflicts.md`
 (on /settings) and are DM'd as questions; `Profile.conflicts_file` puts them in
 every owner turn, so a plain answer is understood and propagated. Nothing found
 sends nothing. On request from a DM, the `qm` server's `reconcile_knowledge`
@@ -73,7 +74,7 @@ guild chat replies.
 
 ## "Work the dev queue"
 
-The queue is `90-System/dev-queue.md` in the vault; `./.venv/Scripts/qm.exe queue`
+The queue is `System/dev-queue.md` in the vault; `./.venv/Scripts/qm.exe queue`
 prints it and its path. For each open item, one at a time:
 
 1. Items tagged `(you)` are the owner's requests. Items tagged `(noticed)` were
@@ -101,7 +102,7 @@ is enabled per clone with `git config core.hooksPath .githooks`.
 1. **One source of truth per thing.** Notion is human-authored; the vault mirrors
    it one-way and adds what the agent learns. No sync conflicts exist anywhere.
 2. **Mute is permanent, reminding is the default.** Everything nudge-able has a
-   stable id and surfaces until muted in `90-System/muted.md` (hand-editable).
+   stable id and surfaces until muted in `System/muted.md` (hand-editable).
 3. **Markdown for what a human reads, SQLite for what the machine counts.**
    `state.db` never holds the only copy of anything; a full sync rebuilds it.
 
@@ -110,7 +111,7 @@ is enabled per clone with `git config core.hooksPath .githooks`.
 ```
 src/quartermaster/
 ├── cli.py            qm doctor/init/sync/bot/web/serve/digest/presale-check/reconcile/push/quit/restart/schedule/mute/auth/mcp
-├── config.py         secrets from .env, preferences from the vault's 90-System/config.toml
+├── config.py         secrets from .env, preferences from the vault's System/config.toml
 ├── agent.py          Agent SDK wrapper; Profile + check_tool are the security boundary
 ├── db.py             state.db — machine state only, rebuildable
 ├── mutes.py          the mute list
@@ -126,7 +127,8 @@ src/quartermaster/
 ├── discord_ops.py    OpsPlan, permissions, hierarchy, matching (pure, well-tested)
 ├── integrations/     google, microsoft, spotify (OAuth; shared accounts.py),
 │                     notion (REST), claude_page (scoped writes), ticketmaster,
-│                     prices, lastfm, weather (Open-Meteo), minecraft (Paper over RCON)
+│                     prices, lastfm, weather (Open-Meteo), minecraft (Paper over RCON),
+│                     satisfactory (SteamCMD + HTTPS API), game_servers (the /servers list)
 ├── servers/          MCP servers over stdio (`qm mcp <name>`); shared helpers in __init__
 ├── dev_queue.py      the owner's queue of changes to this code (worked in Claude Code)
 └── surfaces/         discord_bot (routing, streaming), chat (what DM and web chat share:
@@ -291,7 +293,7 @@ asked to fix Quartermaster itself — it once reported a fix it couldn't make.
 
 ## Dev queue
 
-The vault's `90-System/dev-queue.md`. The owner asks for a change in plain words
+The vault's `System/dev-queue.md`. The owner asks for a change in plain words
 and the owner agent calls the `qm` server's `queue_change` tool, tagged `(you)`;
 it also queues what it notices itself, tagged `(noticed)`. The file is on
 `_PROTECTED`, so the tool is the only way in. (A file-append convention in the
@@ -354,7 +356,7 @@ outside both repos (`%LOCALAPPDATA%\quartermaster\minecraft`). Deliberate:
   Mojang's EULA, which code must not do on their behalf.
 - Whitelist on, `online-mode` on, RCON password random. RCON is reached on
   127.0.0.1; the firewall rule opens only 25565, only to 100.64.0.0/10.
-- The server is launched through WMI (`Win32_Process.Create`), so the WMI
+- The server is launched through WMI (`procs.launch_outside_jobs`), so the WMI
   service is its parent and it belongs to no job of ours: the first live start
   used Popen + `CREATE_BREAKAWAY_FROM_JOB` and died with the owner turn whose
   MCP server started it. It runs as `cmd /c java ... > console.out 2>&1`; the
@@ -375,15 +377,48 @@ outside both repos (`%LOCALAPPDATA%\quartermaster\minecraft`). Deliberate:
   stripped) tailed like the main log, cleared when a new run truncates it.
   Read in whole lines so a game's `LOG_NOISE` regex can drop lines: the status
   poll is an RCON call, and Paper logs every RCON connect and disconnect.
-- **Links** (`90-System/minecraft-links.md`, `id: name` lines) are proven, not
+- **Links** (`System/minecraft-links.md`, `id: name` lines) are proven, not
   claimed: "link me to X" needs X online, whispers X a 6-digit code bound to
   the asker's Discord id (10 min, 5 tries, in memory), and "verify <code>"
   writes the link. The file is on `_PROTECTED` (an email must not get the
   owner agent to grant control) and editable in /settings.
 
+## Satisfactory (`integrations/satisfactory.py`)
+
+A dedicated server beside Minecraft, same shape: `qm satisfactory`, the `qm`
+server's `satisfactory_status/start/stop/save`, a /servers tab. Deliberate:
+- `setup` fetches SteamCMD and installs app 1690800 into the data dir
+  (`satisfactory.dir`). A fresh SteamCMD self-updates and fails the first
+  install with "Missing configuration" (exit 7), so setup tries twice.
+- Saves are where the game puts them, `%LOCALAPPDATA%\FactoryGame\Saved\SaveGames\server`,
+  beside the owner's client saves (a Steam-id folder), which nothing touches.
+- Control is the HTTPS API on 127.0.0.1:7777 (self-signed, not verified).
+  `admin_token` logs in with the random password in `qm-server.json`; if that
+  is refused and the server is unclaimed, it claims it on the spot, so the
+  window where anyone on the tailnet could claim it is the first minute after
+  the first start. Field casing in the API's replies is read case-insensitively.
+- No command tool: `RunCommand` is a full admin console. Stop saves under a
+  new `Session_ddmmyy-HHMMSS` name first, then `Shutdown`.
+- `import` is terminal-only and needs the server up: it unpacks a zip/tarball
+  (and an archive inside it, as hosting panels make them), copies saves and
+  blueprints without overwriting, skips the old host's `ServerSettings.<port>.sav`,
+  sets the autoload session and loads the newest save by its header date.
+- Launched through `procs.launch_outside_jobs` (the same WMI start as
+  Minecraft); the pid file holds the `-Cmd` server exe itself. The console is
+  the game's own `FactoryGame.log`, rotated by the game at each start.
+- Guild channels can't control it: there is no in-game whisper to prove a link.
+- Firewall: one inbound Allow rule for the `-Cmd` exe, remote 100.64.0.0/10
+  ("Satisfactory (Tailscale only)"). The first hidden launch got Windows'
+  allow-access prompt dismissed, which added Block rules for the exe; Block
+  beats Allow, so those had to be deleted.
+- Live-verified 2026-09-22: setup (15GB), first start claimed it, import of a
+  hosting-panel backup (zip holding a tarball) loaded the newest save, `save`,
+  `stop` (saved, exited in 8s), start autoloaded the session, the /servers tab,
+  and it outlived `qm restart`. Not yet: a DM, or a friend joining over Tailscale.
+
 ## Mutes
 
-`90-System/muted.md`, one `kind:key` per line, matching nested ids and ignoring
+`System/muted.md`, one `kind:key` per line, matching nested ids and ignoring
 case. A mute without a kind (`artist/Tool`) covers every kind, so "stop telling
 me about Tool" silences both the digest line and the presale ping. There is no
 "not interested" list anywhere else: `facts/interests.md` holds positives only
@@ -439,7 +474,7 @@ session, run by the `qm web` process with the same `owner_profile` as the bot (o
 `CHAT_STYLE` for both: a per-surface system prompt busts the prompt cache). The reply streams back as server-sent events on the POST's own
 response; the turn is its own task, so closing the tab doesn't cancel it. Since
 the bot and web are separate processes, `chat.TurnLock` (an OS lock on the
-vault's `90-System/turn.lock`, gitignored, released if its holder dies) allows
+vault's `System/turn.lock`, gitignored, released if its holder dies) allows
 one owner turn at a time between them; whichever finds it held says busy. The
 terminal `claude` isn't covered. Guarded like `/settings` saves: CSRF header,
 Host check, the token gate beyond localhost. Proposed Notion writes still get

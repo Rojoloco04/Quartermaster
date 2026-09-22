@@ -49,7 +49,7 @@ def settings(tmp_path: Path, monkeypatch) -> Settings:
                         page(COOKING, "Cooking", ROOT), page(OSU, "osu", GAMING)]
     FakeNotion.fetched = []
     s = Settings(vault=tmp_path / "Vault", notion_token="t", prefs=DEFAULTS)
-    (s.vault / "90-System").mkdir(parents=True)
+    (s.vault / "System").mkdir(parents=True)
     return s
 
 

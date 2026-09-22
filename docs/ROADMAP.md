@@ -150,10 +150,11 @@ Streaming with NVENC hardware transcoding.
   nothing that moves money.
 - **Game servers for friends**, reachable over Tailscale. No port forwarding.
   Piloting with Minecraft (Paper) since 2026-09-22: `qm minecraft`, and the bot
-  starts/stops it and runs allow-listed commands over RCON. **Satisfactory
-  next**: a module in `integrations/` plus one line in `game_servers.GAMES`
-  (on this PC for now, 32GB is enough for a small save alongside the game;
-  a separate server box later).
+  starts/stops it and runs allow-listed commands over RCON. Satisfactory
+  added 2026-09-22 (`qm satisfactory`, DM tools, a /servers tab; on this PC for
+  now, a separate server box later). Next, if wanted: Satisfactory from guild
+  channels. It has no in-game whisper to prove a link with, so control would
+  be owner-only or by a Discord role.
 - **Persistent voice-mute timers.** "Mute for 30s" is scheduled in memory today, so a
   restart leaves the person muted. Move pending undos into `state.db`.
 

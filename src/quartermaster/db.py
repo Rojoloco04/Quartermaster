@@ -50,7 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_price_url_time ON price_history(url, checked_at D
 
 -- Everything nudge-able passes through here so we know whether it's new and
 -- how often we've raised it. Muting is NOT stored here: mutes are a preference
--- you should be able to read and edit, so they live in 90-System/muted.md.
+-- you should be able to read and edit, so they live in System/muted.md.
 CREATE TABLE IF NOT EXISTS surfaced (
     item_id     TEXT PRIMARY KEY,
     kind        TEXT NOT NULL,    -- 'event' | 'price' | 'stale' | 'presale'

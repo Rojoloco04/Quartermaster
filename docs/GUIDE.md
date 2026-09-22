@@ -49,7 +49,7 @@ code, schedules or `.env`, and it will tell you so rather than pretend.
 ## Muting
 
 Say "stop telling me about X" and it's gone for good. Mutes live in
-`90-System/muted.md`, one per line; delete a line to un-mute.
+`System/muted.md`, one per line; delete a line to un-mute.
 
 - `artist/Tool`: everything about Tool, digest and presale pings alike.
 - `event:artist/Tool`: only the digest's event lines for Tool.
@@ -67,7 +67,7 @@ From a terminal: `qm mute artist/Tool --reason "not my thing"`.
   in `facts/interests.md`, at most 10. Nothing to report means no message.
 - Tune what counts as interesting in `facts/interests.md`; a line you write by
   hand outranks anything inferred. Preferences (home, distance bands, digest
-  hour) are in `90-System/config.toml`.
+  hour) are in `System/config.toml`.
 - Preview without sending: `qm digest --dry-run`, `qm presale-check --dry-run`.
 
 ## Moderation (in a server)
@@ -114,6 +114,36 @@ and they @mention "verify <code>". That proves both accounts, so nobody can
 claim an op's name. Whoever's on the op list (`ops.json`, via `op` in the game
 or by hand) gets control; de-op them and it goes. Stopping asks to confirm.
 Links are on the Settings page; delete a line to unlink. You don't need one.
+
+## Satisfactory
+
+A dedicated server on this PC, beside Minecraft, that friends join over
+Tailscale. DM the bot: "start satisfactory", "anyone on satisfactory?", "save
+the factory", "stop satisfactory" (it saves first, and asks if people are on).
+There's no console from chat. Guild channels can't control it yet.
+
+- One-time: `qm satisfactory setup` installs SteamCMD and the server into
+  `%LOCALAPPDATA%\quartermaster\satisfactory` (`satisfactory.dir`). Re-run it,
+  server stopped, to update.
+- Bring an old save across: `qm satisfactory start`, wait a minute, then
+  `qm satisfactory import <backup.zip>`. It takes a zip or tarball (or a
+  tarball inside a zip, as hosting panels make them), copies the saves and
+  blueprints in without overwriting anything, loads the newest save and makes
+  its session the one loaded on every start. The old host's
+  `ServerSettings.<port>.sav` is left out.
+- The server claims itself on first start with a random admin password, kept in
+  `qm-server.json` in that folder: use it to log into the server from the
+  game's Server Manager (to set a join password, say).
+- Saves live where the game puts them: `%LOCALAPPDATA%\FactoryGame\Saved\SaveGames\server`
+  (your own single-player saves are the other folders there, untouched).
+  `qm satisfactory save` saves now under a new name.
+- Friends add the server in the game's Server Manager with this PC's Tailscale
+  address (`tailscale ip -4`), port 7777. The firewall allows the server exe
+  from the tailnet only (rule "Satisfactory (Tailscale only)", added once from
+  an admin PowerShell). If Windows ever asks whether to allow
+  `FactoryServer-Win64-Shipping-Cmd.exe`, a dismissed prompt adds a Block rule
+  that beats the allow: delete any rule named after the exe.
+- `qm quit` leaves it running. Its console is its tab on the Servers page.
 
 ## Seeing what it's doing
 

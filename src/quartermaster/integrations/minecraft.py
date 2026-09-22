@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
 import secrets
 import shutil
@@ -276,17 +275,6 @@ def _alive(pid: int) -> bool:
     return '"cmd.exe"' in out or '"java.exe"' in out
 
 
-# Win32_Process.Create: the new process is made by the WMI service, so it
-# belongs to no job of ours. Popen with CREATE_BREAKAWAY_FROM_JOB wasn't
-# enough: the first live start died with the owner turn that ran the tool.
-_WMI_CREATE = (
-    "$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ShowWindow=[uint16]0}; "
-    "$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments "
-    "@{CommandLine=$env:QM_CMDLINE; CurrentDirectory=$env:QM_CWD; ProcessStartupInformation=$si}; "
-    "\"$($r.ReturnValue) $($r.ProcessId)\""
-)
-
-
 def launch_command(java: str, mem: int, jar: str) -> str:
     """cmd.exe running the server with its output in console.out. Pure."""
     args = subprocess.list2cmdline([java, f"-Xms{mem}G", f"-Xmx{mem}G", *JVM_FLAGS, "-jar", jar, "--nogui"])
@@ -294,14 +282,12 @@ def launch_command(java: str, mem: int, jar: str) -> str:
 
 
 def _launch_detached(cmdline: str, cwd: Path) -> int:
-    out = subprocess.run(
-        ["powershell", "-NoProfile", "-NonInteractive", "-Command", _WMI_CREATE],
-        capture_output=True, text=True, env={**os.environ, "QM_CMDLINE": cmdline, "QM_CWD": str(cwd)},
-    )
-    code, _, pid = out.stdout.strip().partition(" ")
-    if out.returncode != 0 or code != "0" or not pid.isdigit():
-        raise MinecraftError(f"Windows wouldn't start the server: {(out.stderr or out.stdout).strip()[:300]}")
-    return int(pid)
+    from .. import procs
+
+    try:
+        return procs.launch_outside_jobs(cmdline, cwd)
+    except RuntimeError as exc:
+        raise MinecraftError(str(exc)) from exc
 
 
 def is_running(settings: Settings) -> bool:

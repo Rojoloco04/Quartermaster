@@ -9,12 +9,12 @@ files, a plan that already happened, "still has to buy tickets" in one file and
   duplicates, dated items that have passed, statements Notion or a newer fact
   plainly supersede. Code applies them, because facts are the agent's own
   memory and asking about every dedupe is the friction this exists to remove.
-  Each edited file's previous version is kept in ``90-System/backups/``; a file
+  Each edited file's previous version is kept in ``System/backups/``; a file
   changed while the model was thinking is skipped; a rewrite that cuts more
   than 60% is dropped (it prunes, it doesn't gut).
 - **conflicts** it can't settle: two sources disagree and nothing says which is
   current. Those are the owner's to answer, so they're written to
-  ``90-System/conflicts.md`` (shown on /settings, and in every owner turn's
+  ``System/conflicts.md`` (shown on /settings, and in every owner turn's
   context) and DM'd as a question. The owner answers in plain words and the
   owner agent updates every file that states it.
 
@@ -194,9 +194,9 @@ def for_prompt(path: Path | None) -> str:
         return ""
     body = text[text.index("## "):].strip()
     return (
-        "Open knowledge conflicts (90-System/conflicts.md), already put to the owner as questions. "
+        "Open knowledge conflicts (System/conflicts.md), already put to the owner as questions. "
         "If their message settles one, update every facts file that states it, propose a Notion edit "
-        "if Notion is the wrong side, and delete that entry from 90-System/conflicts.md:\n" + body
+        "if Notion is the wrong side, and delete that entry from System/conflicts.md:\n" + body
     )
 
 

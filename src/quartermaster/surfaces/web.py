@@ -133,8 +133,8 @@ def read_log_from(path: Path, pos: int, whole_lines: bool = False) -> tuple[int,
 # never has to open the vault to check or change it. Not the Notion mirror (the
 # next sync overwrites it; edit in Notion), and not digests or the inbox.
 
-EDITABLE = ("CLAUDE.md", "90-System/config.toml", "90-System/muted.md", "90-System/dev-queue.md",
-            "90-System/conflicts.md", "90-System/minecraft-links.md")
+EDITABLE = ("CLAUDE.md", "System/config.toml", "System/muted.md", "System/dev-queue.md",
+            "System/conflicts.md", "System/minecraft-links.md")
 _FACT = re.compile(r"facts/[\w.-]+\.md")
 
 
@@ -180,7 +180,7 @@ def save_file(vault: Path, rel: str, text: str, loaded_hash: str) -> str:
 def effective_prefs(vault: Path) -> list[tuple[str, str, bool]]:
     """(dotted key, value, set in config.toml) for every preference in force.
     Read fresh, so it shows what the next scheduled run will use."""
-    path = vault / "90-System" / "config.toml"
+    path = vault / "System" / "config.toml"
     try:
         yours = tomllib.loads(path.read_text("utf-8")) if path.exists() else {}
     except tomllib.TOMLDecodeError:
@@ -241,7 +241,7 @@ def set_pref(vault: Path, key: str, raw: str, loaded_hash: str) -> str:
         raise EditRefused(f"{key} is a list; edit the file below.")
     value = _parse_pref(raw, like)
     table, name = key.split(".")
-    path = vault / "90-System" / "config.toml"
+    path = vault / "System" / "config.toml"
     lines = path.read_text("utf-8").splitlines() if path.exists() else []
     line = f"{name} = {_toml_value(value)}"
 
@@ -263,7 +263,7 @@ def set_pref(vault: Path, key: str, raw: str, loaded_hash: str) -> str:
         placed = None
     if placed != value:
         raise EditRefused(f"Couldn't place {key} in the file; edit it below.")
-    return save_file(vault, "90-System/config.toml", text, loaded_hash)
+    return save_file(vault, "System/config.toml", text, loaded_hash)
 
 
 def secret_status() -> list[tuple[str, bool]]:
@@ -719,7 +719,7 @@ def settings_page(settings: Settings, csrf: str) -> str:
         + f">{_e(value)}</td></tr>"
         for key, value, _ in effective_prefs(vault)
     )
-    config_hash = file_hash(vault / "90-System" / "config.toml")
+    config_hash = file_hash(vault / "System" / "config.toml")
     env = "".join(
         f"<tr><td><code>{_e(name)}</code></td><td class='{'ok' if is_set else 'muted'}'>{'set' if is_set else 'not set'}</td></tr>"
         for name, is_set in secret_status()
@@ -735,15 +735,15 @@ and to the bot after a restart, except <code>chat.*</code>, which applies from t
 it (Enter saves, Esc cancels). A save is refused if the agent changed the file since you opened it. Notion pages
 are edited in Notion: the mirror is overwritten on every sync.</p></section>
 <section><h2>Preferences in force</h2><table id="prefs" data-hash="{config_hash}"><tr><th>Setting</th><th>Value</th></tr>{prefs}</table>
-{file_block(vault, "90-System/config.toml", "Edit preferences", "The whole file, for lists like the distance bands. Saved only if it parses.")}</section>
-<section><h2>Conflicts</h2>{file_block(vault, "90-System/conflicts.md", "Where what it knows disagrees", "Found by the daily reconcile (<code>qm reconcile</code>). Answer in a DM and every file gets updated, or fix it yourself and delete the entry.")}</section>
+{file_block(vault, "System/config.toml", "Edit preferences", "The whole file, for lists like the distance bands. Saved only if it parses.")}</section>
+<section><h2>Conflicts</h2>{file_block(vault, "System/conflicts.md", "Where what it knows disagrees", "Found by the daily reconcile (<code>qm reconcile</code>). Answer in a DM and every file gets updated, or fix it yourself and delete the entry.")}</section>
 <section><h2>What it knows</h2>{fact_blocks}</section>
 <section><h2>Instructions</h2>{file_block(vault, "CLAUDE.md", "How the agent works in your vault", "Loaded at the start of every conversation and into every digest.")}</section>
 <div class="grid2">
-<section><h2>Mutes</h2>{file_block(vault, "90-System/muted.md", "Never raise these again", "One <code>kind:key</code> per line. <code>artist/Tool</code> with no kind mutes every kind.")}</section>
-<section><h2>Dev queue</h2>{file_block(vault, "90-System/dev-queue.md", "Changes to Quartermaster itself", "Worked in Claude Code. Tick an item with <code>[x]</code> to close it.")}</section>
+<section><h2>Mutes</h2>{file_block(vault, "System/muted.md", "Never raise these again", "One <code>kind:key</code> per line. <code>artist/Tool</code> with no kind mutes every kind.")}</section>
+<section><h2>Dev queue</h2>{file_block(vault, "System/dev-queue.md", "Changes to Quartermaster itself", "Worked in Claude Code. Tick an item with <code>[x]</code> to close it.")}</section>
 </div>
-<section><h2>Minecraft links</h2>{file_block(vault, "90-System/minecraft-links.md", "Discord accounts linked to Minecraft names", "A linked name on the server's op list may start, stop and run commands from a Discord channel. Added when someone proves both accounts in-game; delete a line to unlink.")}</section>
+<section><h2>Minecraft links</h2>{file_block(vault, "System/minecraft-links.md", "Discord accounts linked to Minecraft names", "A linked name on the server's op list may start, stop and run commands from a Discord channel. Added when someone proves both accounts in-game; delete a line to unlink.")}</section>
 <section><h2>Secrets</h2><p class="note">In the repo's <code>.env</code>. Shown as set or not, never their values, and not editable from a browser.</p>
 <table>{env}</table></section>""", EDIT_JS + PREF_JS, EDIT_CSS + PREF_CSS, csrf)
 

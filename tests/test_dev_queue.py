@@ -20,7 +20,7 @@ def test_agents_queue_only_through_the_tool(tmp_path: Path):
     # file itself is protected so every entry is one tagged, reviewable line.
     owner = agent.owner_profile(Settings(vault=tmp_path))
     assert agent.check_tool(owner, "mcp__qm__queue_change", {}) is None
-    assert agent.check_tool(owner, "Edit", {"file_path": "90-System/dev-queue.md"})
+    assert agent.check_tool(owner, "Edit", {"file_path": "System/dev-queue.md"})
     assert "queue_change" in agent.OWNER_LIMITS
 
 

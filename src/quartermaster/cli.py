@@ -226,7 +226,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         subprocess.run(["git", "init", "-q"], cwd=vault, check=False)
         (vault / ".gitignore").write_text(
             "# Machine state - rebuildable, and noisy in diffs.\n"
-            "90-System/state.db\n90-System/state.db-wal\n90-System/state.db-shm\n90-System/turn.lock\n",
+            "System/state.db\nSystem/state.db-wal\nSystem/state.db-shm\nSystem/turn.lock\n",
             encoding="utf-8",
         )
         print("Initialised a git repo in the vault. Add your private GitHub remote when ready.")
@@ -401,6 +401,33 @@ def cmd_minecraft(args: argparse.Namespace) -> int:
             print(minecraft.status(settings))
             print(f"Folder: {minecraft.server_dir(settings)}")
     except minecraft.MinecraftError as exc:
+        print(exc)
+        return 1
+    return 0
+
+
+def cmd_satisfactory(args: argparse.Namespace) -> int:
+    from .integrations import satisfactory
+
+    settings = load_settings()
+    try:
+        if args.action == "setup":
+            print(satisfactory.setup(settings))
+        elif args.action == "start":
+            print(satisfactory.start(settings))
+        elif args.action == "stop":
+            print(satisfactory.stop(settings))
+        elif args.action == "save":
+            print(satisfactory.save(settings))
+        elif args.action == "import":
+            if not args.archive:
+                print("Give the save archive: qm satisfactory import <path to .zip or .tar.gz>")
+                return 1
+            print(satisfactory.import_save(settings, Path(args.archive)))
+        else:
+            print(satisfactory.status(settings))
+            print(f"Folder: {satisfactory.server_dir(settings)}")
+    except satisfactory.SatisfactoryError as exc:
         print(exc)
         return 1
     return 0
@@ -582,6 +609,11 @@ def main(argv: list[str] | None = None) -> int:
     p_mc.add_argument("text", nargs="*", help="cmd: the server command (whitelist add Steve); op: a player to whitelist and op")
     p_mc.add_argument("--accept-eula", action="store_true", help="setup: you agree to Mojang's EULA")
     p_mc.set_defaults(func=cmd_minecraft)
+
+    p_sf = sub.add_parser("satisfactory", help="the Satisfactory dedicated server friends reach over Tailscale")
+    p_sf.add_argument("action", nargs="?", default="status", choices=["status", "setup", "start", "stop", "save", "import"])
+    p_sf.add_argument("archive", nargs="?", help="import: a .zip or .tar.gz of an old server's saves and blueprints")
+    p_sf.set_defaults(func=cmd_satisfactory)
 
     sub.add_parser("quit", aliases=["stop"], help="stop every running Quartermaster process (bot, web, jobs)").set_defaults(
         func=cmd_quit

@@ -8,7 +8,7 @@ built and rejected - so every item, and especially every ``(noticed)`` one, is
 judged by a person before anything changes. That review is what makes it safe
 for an agent that reads email and the web to write here.
 
-It lives in the private vault (``90-System/dev-queue.md``), not as GitHub
+It lives in the private vault (``System/dev-queue.md``), not as GitHub
 issues: the code repo is public.
 """
 
