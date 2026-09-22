@@ -97,6 +97,8 @@ class Settings:
     spotify_client_secret: str | None = None
     ticketmaster_api_key: str | None = None
     klipy_api_key: str | None = None
+    lastfm_api_key: str | None = None
+    lastfm_user: str | None = None
     prefs: dict = field(default_factory=dict)
 
     # --- Vault paths. Everything else asks here rather than joining strings. ---
@@ -207,5 +209,7 @@ def load_settings(vault_override: Path | None = None) -> Settings:
         spotify_client_secret=os.getenv("SPOTIFY_CLIENT_SECRET") or None,
         ticketmaster_api_key=os.getenv("TICKETMASTER_API_KEY") or None,
         klipy_api_key=os.getenv("KLIPY_API_KEY") or None,
+        lastfm_api_key=os.getenv("LASTFM_API_KEY") or None,
+        lastfm_user=os.getenv("LASTFM_USER") or None,
         prefs=prefs,
     )

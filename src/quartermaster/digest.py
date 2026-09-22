@@ -27,7 +27,7 @@ from pathlib import Path
 
 from . import agent, db, mutes, stale
 from .config import Settings
-from .integrations import prices, ticketmaster
+from .integrations import lastfm, prices, ticketmaster
 from .integrations.google import list_events
 from .integrations.spotify import accounts as spotify_accounts, top_artist_names, top_artists
 from .surfaces.digest_send import send_dm
@@ -137,16 +137,22 @@ def _interests(settings: Settings) -> str:
 
 
 def _top_artists(settings: Settings) -> str:
-    """Spotify's taste signal for music events. Left out, not marked
-    "unavailable", on failure: it's a filtering aid, not a digest section."""
+    """Spotify (recent) and Last.fm (last year) taste signal for music events.
+    Left out, not marked "unavailable", on failure: it's a filtering aid, not a
+    digest section."""
+    parts = []
     labels = spotify_accounts(settings)
-    if not labels:
-        return ""
-    try:
-        return top_artists(settings, labels[0])
-    except Exception as exc:  # noqa: BLE001 - see above
-        log.warning("digest: spotify top artists unavailable: %s", exc)
-        return ""
+    if labels:
+        try:
+            parts.append("Spotify, last ~6 months:\n" + top_artists(settings, labels[0]))
+        except Exception as exc:  # noqa: BLE001 - see above
+            log.warning("digest: spotify top artists unavailable: %s", exc)
+    if settings.lastfm_api_key and settings.lastfm_user:
+        try:
+            parts.append("Last.fm, last 12 months:\n" + lastfm.summary(settings))
+        except Exception as exc:  # noqa: BLE001 - see above
+            log.warning("digest: last.fm top artists unavailable: %s", exc)
+    return "\n\n".join(parts)
 
 
 def build_payload(settings: Settings, conn: sqlite3.Connection, *, record: bool) -> dict:
@@ -205,20 +211,25 @@ def positive_interests(text: str) -> str:
 
 
 def _taste(settings: Settings) -> tuple[set[str], str]:
-    """(Spotify top artist names, the positive parts of facts/interests.md),
-    both lowercased."""
+    """(Spotify and Last.fm top artist names, the positive parts of
+    facts/interests.md), all lowercased. Each source fails on its own."""
     names: set[str] = set()
     labels = spotify_accounts(settings)
     if labels:
         try:
-            names = top_artist_names(settings, labels[0])
-        except Exception as exc:  # noqa: BLE001 - interests.md still works alone
+            names |= top_artist_names(settings, labels[0])
+        except Exception as exc:  # noqa: BLE001 - the other sources still work
             log.warning("presale: spotify taste unavailable: %s", exc)
+    if settings.lastfm_api_key and settings.lastfm_user:
+        try:
+            names |= lastfm.artist_names(settings)
+        except Exception as exc:  # noqa: BLE001 - the other sources still work
+            log.warning("presale: last.fm taste unavailable: %s", exc)
     return names, positive_interests(_interests(settings)).lower()
 
 
 def matches_taste(event: dict, artists: set[str], interests: str) -> bool:
-    """True if any act on the bill is a Spotify top artist or is named in
+    """True if any act on the bill is a Spotify/Last.fm top artist or is named in
     interests.md (as a whole word, so "Tool" doesn't match "toolbox")."""
     for act in event.get("attractions") or ([event["attraction"]] if event.get("attraction") else []):
         name = act.lower()

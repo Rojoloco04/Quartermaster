@@ -162,6 +162,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         ("SPOTIFY_CLIENT_ID", settings.spotify_client_id, "taste signal"),
         ("SPOTIFY_CLIENT_SECRET", settings.spotify_client_secret, "taste signal"),
         ("TICKETMASTER_API_KEY", settings.ticketmaster_api_key, "events"),
+        ("LASTFM_API_KEY", settings.lastfm_api_key, "taste signal"),
+        ("LASTFM_USER", settings.lastfm_user, "taste signal"),
         ("KLIPY_API_KEY", settings.klipy_api_key, "optional - gif search"),
     ]
     print()
