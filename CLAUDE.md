@@ -6,8 +6,8 @@ anything. `docs/GUIDE.md` is how to use it (also served by `qm web`);
 
 State as of 2026-09-22: Phases 1–5 done (Phase 5: service wrapper, daily vault
 push, Tailscale; restic and Uptime Kuma dropped; a fresh clone of the vault
-remote matched the local vault). A Satisfactory server beside Minecraft
-(`integrations/satisfactory.py`, live 2026-09-22), then the Phase 6+ extensions. 404 tests.
+remote matched the local vault), plus a Satisfactory server beside Minecraft
+(live 2026-09-22). Next: Phase 6 in `docs/ROADMAP.md`. 404 tests.
 The vault's system folder is `System/` (was `90-System/` until 2026-09-22).
 
 **Open right now**
@@ -25,6 +25,10 @@ The vault's system folder is `System/` (was `90-System/` until 2026-09-22).
   DM since the WMI launch (a terminal
   `qm minecraft start` via WMI outlived its command and answered RCON,
   2026-09-22), plus joining over Tailscale and the channel link flow.
+- Satisfactory is live with the owner's imported save, but not yet driven from
+  a DM (`satisfactory_*` tools) and no friend has joined over Tailscale. It
+  runs until stopped: `qm quit` leaves it up, and it's using RAM beside the
+  owner's own game.
 
 **Lessons** (`lessons.py`): the owner agent calls the `qm` server's
 `record_lesson` when corrected; a dated line lands in `facts/lessons.md`, and
