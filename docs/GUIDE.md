@@ -28,7 +28,7 @@ with `claude --continue`. The **Chat** page in `qm web`
   conversation (re-sending a long one costs every turn). It still knows
   everything in `facts/`; it just doesn't remember the last chat word for word.
   Change the minutes with `chat.fresh_after_minutes` on the Settings page (0 =
-  never).
+  never); it applies from the next message, no restart.
 
 What it can reach: your vault (read and write), the web, Google Calendar and
 Gmail (Gmail is read-only), Microsoft To Do (including checklist steps), Spotify
@@ -37,7 +37,10 @@ Gmail (Gmail is read-only), Microsoft To Do (including checklist steps), Spotify
 In Notion it writes to your `Claude` page and its sub-pages freely. For any
 other page it proposes the change and you get a DM with Confirm/Cancel; nothing
 is written unless you press Confirm, and a page it replaces is backed up into
-the vault first. Sunday mornings it proposes a tidied Claude page with stale
+the vault first. Ask it to delete a page (any page, including under the Claude
+page) and you get the same Confirm/Cancel; on Confirm the page is saved to the
+vault and moved, with everything under it, to Notion's trash, where you can
+restore it. Sunday mornings it proposes a tidied Claude page with stale
 entries removed, which you confirm the same way (`qm tidy --dry-run` previews
 it). It can't change its own
 code, schedules or `.env`, and it will tell you so rather than pretend.
@@ -86,6 +89,9 @@ targets exactly that message.
   instructions, mutes and the dev queue. Secrets show only as set or not set.
   Click Edit, change it, Save (or Ctrl+S). A save is refused if the agent
   changed the file after you opened it, and preferences must be valid TOML.
+  Each preference also has a Change button: type the value, Enter saves it into
+  `config.toml` (comments kept), Esc cancels. Lists (the distance bands) are
+  edited in the file.
 - **Lessons**: tell the bot it got something wrong, in any words, and it records
   the rule in `facts/lessons.md`. Every later reply and digest follows it. Fix
   or delete a lesson on the Settings page.

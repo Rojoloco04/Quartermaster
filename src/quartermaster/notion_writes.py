@@ -9,8 +9,10 @@ owner a preview with Confirm/Cancel, and **code** applies it on Confirm.
 The gate is a button press, not the model's judgement. An email or web page the
 agent read can produce a proposal; it cannot approve one.
 
-A ``replace`` keeps the page's current content first, as markdown in the vault's
-git repo, because Notion's own history is not something this code can rely on.
+A ``replace`` or ``delete`` keeps the page's current content first, as markdown
+in the vault's git repo, because Notion's own history is not something this code
+can rely on. A delete moves the page to Notion's trash (restorable there), never
+past it.
 """
 
 from __future__ import annotations
@@ -27,7 +29,8 @@ from .integrations.notion import NotionClient, NotionError
 
 log = logging.getLogger(__name__)
 
-MODES = ("append", "replace")
+MODES = ("append", "replace", "delete")
+BACKED_UP = ("replace", "delete")
 PREVIEW_CHARS = 700
 
 
@@ -41,7 +44,7 @@ def propose(
 ) -> int:
     if mode not in MODES:
         raise NotionError(f"mode must be one of {', '.join(MODES)}.")
-    if not content.strip():
+    if mode != "delete" and not content.strip():
         raise NotionError("Nothing to write.")
     cur = conn.execute(
         """
@@ -72,11 +75,19 @@ def decide(conn: sqlite3.Connection, write_id: int, status: str) -> None:
 def preview(row: sqlite3.Row) -> str:
     """What the owner sees before pressing anything. Built from the row's own
     fields, never from the model's prose."""
+    title = row["page_title"] or row["page_id"]
+    if row["mode"] == "delete":
+        lines = [f"**Notion change #{row['id']}** — 🗑️ **Delete** *{title}*"]
+        if row["why"]:
+            lines.append(f"_{row['why']}_")
+        lines.append("_Moves it and every page under it to Notion's trash, where you can restore it. "
+                     "The page is saved to the vault first._")
+        return "\n".join(lines)
     verb = "Append to" if row["mode"] == "append" else "**Replace** the contents of"
     body = (row["content"] or "").strip()
     if len(body) > PREVIEW_CHARS:
         body = body[:PREVIEW_CHARS] + f"\n… ({len(row['content']) - PREVIEW_CHARS} more characters)"
-    lines = [f"**Notion change #{row['id']}** — {verb} *{row['page_title'] or row['page_id']}*"]
+    lines = [f"**Notion change #{row['id']}** — {verb} *{title}*"]
     if row["why"]:
         lines.append(f"_{row['why']}_")
     lines.append(f"```\n{body}\n```")
@@ -95,17 +106,23 @@ def apply(settings: Settings, conn: sqlite3.Connection, row: sqlite3.Row) -> str
     settings.require("notion_token")
     try:
         with NotionClient(settings.notion_token or "") as client:
-            if row["mode"] == "replace":
-                # Keep what is about to be overwritten, in the vault's git repo.
+            if row["mode"] in BACKED_UP:
+                # Keep what is about to be overwritten or trashed, in the vault's git repo.
                 current = client.page_markdown(row["page_id"]).markdown
                 path = backup_path(settings, row)
                 path.parent.mkdir(parents=True, exist_ok=True)
+                done = "replaced" if row["mode"] == "replace" else "deleted"
                 path.write_text(
                     f"# Backup of {row['page_title'] or row['page_id']}\n"
-                    f"Taken {db.utcnow()} before Quartermaster replaced it (change #{row['id']}).\n\n"
+                    f"Taken {db.utcnow()} before Quartermaster {done} it (change #{row['id']}).\n\n"
                     + current,
                     encoding="utf-8",
                 )
+            if row["mode"] == "delete":
+                client.trash_page(row["page_id"])
+                result = (f"🗑️ Moved *{row['page_title']}* to Notion's trash. Its contents: `{path.name}` "
+                          "in the vault. The next sync drops it from the mirror.")
+            elif row["mode"] == "replace":
                 client.replace_markdown(row["page_id"], row["content"])
                 result = f"✅ Replaced *{row['page_title']}*. Previous contents: `{path.name}` in the vault."
             else:

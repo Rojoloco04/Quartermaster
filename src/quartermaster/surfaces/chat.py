@@ -17,7 +17,7 @@ from pathlib import Path, PurePath
 from urllib.parse import urlparse
 
 from ..agent import Profile, transcript_dir
-from ..config import Settings
+from ..config import Settings, current_prefs
 
 log = logging.getLogger(__name__)
 
@@ -54,8 +54,9 @@ def idle_minutes(settings: Settings, now: float | None = None) -> float | None:
 def continue_or_fresh(settings: Settings, profile: Profile, now: float | None = None) -> Profile:
     """The profile for this turn: a fresh session after ``chat.fresh_after_minutes``
     of quiet, else the shared one. Continuing re-sends the whole conversation
-    each turn, and after a pause the prompt cache has to be rebuilt for it too."""
-    limit = settings.prefs.get("chat", {}).get("fresh_after_minutes", 5)
+    each turn, and after a pause the prompt cache has to be rebuilt for it too.
+    Read from config.toml each turn, so a change applies without a restart."""
+    limit = current_prefs(settings).get("chat", {}).get("fresh_after_minutes", 5)
     if not profile.share_session or not limit:
         return profile
     idle = idle_minutes(settings, now)

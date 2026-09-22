@@ -81,7 +81,7 @@ CREATE TABLE IF NOT EXISTS pending_writes (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     page_id    TEXT NOT NULL,
     page_title TEXT,
-    mode       TEXT NOT NULL,    -- 'append' | 'replace'
+    mode       TEXT NOT NULL,    -- 'append' | 'replace' | 'delete'
     content    TEXT NOT NULL,
     why        TEXT,
     source     TEXT,             -- 'agent' | 'tidy'

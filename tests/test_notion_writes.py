@@ -30,6 +30,7 @@ class FakeClient:
     def __init__(self, token, timeout=30.0):
         self.appended: list[tuple[str, str]] = []
         self.replaced: list[tuple[str, str]] = []
+        self.trashed: list[str] = []
         FakeClient.instance = self
 
     def __enter__(self):
@@ -48,6 +49,9 @@ class FakeClient:
 
     def replace_markdown(self, page_id, markdown):
         self.replaced.append((page_id, markdown))
+
+    def trash_page(self, page_id):
+        self.trashed.append(page_id)
 
 
 def test_proposing_writes_nothing_until_applied(settings, conn, monkeypatch):
@@ -102,9 +106,44 @@ def test_preview_is_built_from_the_row(settings, conn):
     assert "more characters)" in text and "saved to the vault" in text
 
 
+def test_delete_backs_up_then_trashes(settings, conn, monkeypatch):
+    monkeypatch.setattr(notion_writes, "NotionClient", FakeClient)
+    notion_writes.propose(conn, "AB", "Old plan", "delete", "", why="owner asked")
+    row = notion_writes.pending(conn)[0]
+    text = notion_writes.preview(row)
+    assert "Delete" in text and "Old plan" in text and "trash" in text and "```" not in text
+    result = notion_writes.apply(settings, conn, row)
+    assert FakeClient.instance.trashed == ["ab"] and FakeClient.instance.replaced == []
+    backup = notion_writes.backup_path(settings, row)
+    assert "the old contents" in backup.read_text(encoding="utf-8") and backup.name in result
+
+
+def test_delete_tool_refuses_the_claude_page_and_unknown_pages(settings, monkeypatch):
+    from quartermaster import servers
+    from quartermaster.servers import qm
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    monkeypatch.setattr(servers, "settings", lambda: settings)
+    monkeypatch.setattr(qm, "settings", lambda: settings)
+    with db.session(settings.db_path) as conn:
+        conn.execute("INSERT INTO notion_pages (page_id, vault_path, title, synced_at) VALUES (?, ?, ?, ?)",
+                     ("d" * 32, "notion/x.md", "Quartermaster", db.utcnow()))
+        conn.commit()
+    with pytest.raises(ToolError, match="Claude page itself"):
+        qm.propose_notion_delete("c" * 32)
+    with pytest.raises(ToolError, match="No mirrored page"):
+        qm.propose_notion_delete("e" * 32)
+    with pytest.raises(ToolError, match="propose_notion_delete"):
+        qm.propose_notion_edit("d" * 32, "x", mode="delete")
+    assert "Nothing is deleted yet" in qm.propose_notion_delete("d" * 32, why="asked")
+    with db.session(settings.db_path) as conn:
+        row = notion_writes.pending(conn)[0]
+        assert row["mode"] == "delete" and row["page_title"] == "Quartermaster"
+
+
 def test_bad_proposals_are_refused(conn):
     with pytest.raises(NotionError):
-        notion_writes.propose(conn, "ab", "Notes", "delete", "x")
+        notion_writes.propose(conn, "ab", "Notes", "archive", "x")
     with pytest.raises(NotionError):
         notion_writes.propose(conn, "ab", "Notes", "append", "   ")
 

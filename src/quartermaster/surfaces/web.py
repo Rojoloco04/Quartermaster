@@ -195,6 +195,72 @@ def effective_prefs(vault: Path) -> list[tuple[str, str, bool]]:
     return rows
 
 
+def _toml_value(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    return json.dumps(value, ensure_ascii=False)  # a JSON string is a valid TOML basic string
+
+
+def _parse_pref(raw: str, like: object) -> object:
+    """The typed value for one preference, shaped like its current one. A string
+    setting takes plain text; quotes are optional."""
+    raw = raw.strip()
+    try:
+        value = tomllib.loads(f"v = {raw}")["v"]
+    except tomllib.TOMLDecodeError:
+        value = raw
+    if isinstance(like, str):
+        return value if isinstance(value, str) else raw
+    if isinstance(like, bool):
+        if isinstance(value, bool):
+            return value
+        raise EditRefused("Must be true or false.")
+    if isinstance(like, int) and isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(like, float) and isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    raise EditRefused(f"Must be {'a whole number' if isinstance(like, int) else 'a number'}.")
+
+
+def set_pref(vault: Path, key: str, raw: str, loaded_hash: str) -> str:
+    """Set one ``table.key`` preference in config.toml, keeping the file's
+    comments and layout; returns the new hash. Lists and deeper tables are
+    edited in the file itself."""
+    current = dict((k, v) for k, v, _ in effective_prefs(vault))
+    if key not in current or key.count(".") != 1:
+        raise EditRefused(f"{key} can't be set here; edit the file below.")
+    like = json.loads(current[key])
+    if isinstance(like, (list, dict)):
+        raise EditRefused(f"{key} is a list; edit the file below.")
+    value = _parse_pref(raw, like)
+    table, name = key.split(".")
+    path = vault / "90-System" / "config.toml"
+    lines = path.read_text("utf-8").splitlines() if path.exists() else []
+    line = f"{name} = {_toml_value(value)}"
+
+    header = next((i for i, l in enumerate(lines) if re.fullmatch(rf"\s*\[{re.escape(table)}\]\s*(#.*)?", l)), None)
+    if header is None:
+        lines += ([""] if lines and lines[-1].strip() else []) + [f"[{table}]", line]
+    else:
+        end = next((i for i in range(header + 1, len(lines)) if re.match(r"\s*\[", lines[i])), len(lines))
+        at = next((i for i in range(header + 1, end) if re.match(rf"\s*{re.escape(name)}\s*=", lines[i])), None)
+        if at is not None:
+            lines[at] = line
+        else:
+            last = max((i for i in range(header, end) if lines[i].strip()), default=header)
+            lines.insert(last + 1, line)
+    text = "\n".join(lines) + "\n"
+    try:
+        placed = tomllib.loads(text).get(table, {}).get(name)
+    except tomllib.TOMLDecodeError:
+        placed = None
+    if placed != value:
+        raise EditRefused(f"Couldn't place {key} in the file; edit it below.")
+    return save_file(vault, "90-System/config.toml", text, loaded_hash)
+
+
 def secret_status() -> list[tuple[str, bool]]:
     """(name, set?) for every key in .env.example. Never the values."""
     example = REPO_ROOT / ".env.example"
@@ -481,6 +547,43 @@ document.addEventListener('keydown', ev => {
 """
 
 
+PREF_CSS = """
+#prefs button { font:inherit; font-size:11px; padding:1px 8px; border-radius:5px; cursor:pointer; margin-left:6px;
+  border:1px solid var(--line); background:var(--code); color:var(--fg) }
+#prefs input { width:100%; box-sizing:border-box; padding:3px 6px; border:1px solid var(--accent); border-radius:5px;
+  background:var(--bg); color:var(--fg); font:12px ui-monospace, Consolas, monospace }
+"""
+
+# One preference at a time: Enter saves into config.toml (comments kept), Esc
+# cancels. The page reloads after a save so the table, the file and its hash agree.
+PREF_JS = r"""
+document.addEventListener('click', ev => {
+  const b = ev.target.closest('[data-pref]');
+  if (!b) return;
+  const row = b.closest('tr'), cell = row.querySelector('td.v');
+  if (cell.querySelector('input')) return;
+  const orig = cell.textContent, input = document.createElement('input');
+  input.value = orig.startsWith('"') ? JSON.parse(orig) : orig;
+  cell.textContent = ''; cell.append(input); input.focus(); input.select();
+  const msg = document.createElement('span'); msg.className = 'msg'; b.after(msg);
+  const done = () => { cell.textContent = orig; msg.remove(); };
+  input.addEventListener('keydown', async e => {
+    if (e.key === 'Escape') return done();
+    if (e.key !== 'Enter') return;
+    msg.className = 'msg muted'; msg.textContent = ' Saving…';
+    let r = null, d = {};
+    try {
+      r = await fetch('/api/pref', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-QM-CSRF': QM_CSRF},
+        body: JSON.stringify({key: row.dataset.key, value: input.value, hash: document.getElementById('prefs').dataset.hash})});
+      d = await r.json();
+    } catch (err) { d = {error: 'Save failed: ' + err}; }
+    if (!r || !r.ok) { msg.className = 'msg bad'; msg.textContent = ' ' + (d.error || 'Save failed.'); return; }
+    location.reload();
+  });
+});
+"""
+
+
 def render_file(rel: str, text: str) -> str:
     """How an editable file reads when it isn't being edited. The title is in the
     block's header, so a leading ``# Heading`` isn't repeated; TOML sits behind a
@@ -523,10 +626,13 @@ def _fact_title(path: Path) -> str:
 def settings_page(settings: Settings, csrf: str) -> str:
     vault = settings.vault
     prefs = "".join(
-        f"<tr><td><code>{_e(key)}</code></td><td class='v'>{_e(value)}</td>"
-        f"<td><span class='tag{' yours' if yours else ''}'>{'yours' if yours else 'default'}</span></td></tr>"
+        f"<tr data-key='{_e(key)}'><td><code>{_e(key)}</code></td><td class='v'>{_e(value)}</td>"
+        f"<td><span class='tag{' yours' if yours else ''}'>{'yours' if yours else 'default'}</span>"
+        + ("" if value.startswith(("[", "{")) or key.count(".") != 1 else " <button type='button' data-pref>Change</button>")
+        + "</td></tr>"
         for key, value, yours in effective_prefs(vault)
     )
+    config_hash = file_hash(vault / "90-System" / "config.toml")
     env = "".join(
         f"<tr><td><code>{_e(name)}</code></td><td class='{'ok' if is_set else 'muted'}'>{'set' if is_set else 'not set'}</td></tr>"
         for name, is_set in secret_status()
@@ -538,9 +644,10 @@ def settings_page(settings: Settings, csrf: str) -> str:
     return page("Settings", f"""
 <section><h2>How changes apply</h2><p class="note" style="margin:0">Everything Quartermaster runs on is on this page.
 Instructions, facts and lessons apply from the next message. Preferences apply to scheduled jobs on their next run
-and to the bot after a restart. A save is refused if the agent changed the file since you opened it. Notion pages
+and to the bot after a restart, except <code>chat.*</code>, which applies from the next message. Change one with its
+button (Enter saves, Esc cancels). A save is refused if the agent changed the file since you opened it. Notion pages
 are edited in Notion: the mirror is overwritten on every sync.</p></section>
-<section><h2>Preferences in force</h2><table><tr><th>Setting</th><th>Value</th><th></th></tr>{prefs}</table>
+<section><h2>Preferences in force</h2><table id="prefs" data-hash="{config_hash}"><tr><th>Setting</th><th>Value</th><th></th></tr>{prefs}</table>
 {file_block(vault, "90-System/config.toml", "Edit preferences", "Only what you set here overrides the defaults above. Saved only if it parses.")}</section>
 <section><h2>Conflicts</h2>{file_block(vault, "90-System/conflicts.md", "Where what it knows disagrees", "Found by the daily reconcile (<code>qm reconcile</code>). Answer in a DM and every file gets updated, or fix it yourself and delete the entry.")}</section>
 <section><h2>What it knows</h2>{fact_blocks}</section>
@@ -550,7 +657,7 @@ are edited in Notion: the mirror is overwritten on every sync.</p></section>
 <section><h2>Dev queue</h2>{file_block(vault, "90-System/dev-queue.md", "Changes to Quartermaster itself", "Worked in Claude Code. Tick an item with <code>[x]</code> to close it.")}</section>
 </div>
 <section><h2>Secrets</h2><p class="note">In the repo's <code>.env</code>. Shown as set or not, never their values, and not editable from a browser.</p>
-<table>{env}</table></section>""", EDIT_JS, EDIT_CSS, csrf)
+<table>{env}</table></section>""", EDIT_JS + PREF_JS, EDIT_CSS + PREF_CSS, csrf)
 
 
 # --- App -----------------------------------------------------------------------
@@ -636,6 +743,18 @@ def build_app(settings: Settings, token: str | None = None, hosts: tuple[str, ..
             return JSONResponse({"error": "Malformed save."}, status_code=400)
         saved = (settings.vault / rel).read_text("utf-8")
         return JSONResponse({"hash": new_hash, "html": render_file(rel, saved)})
+
+    async def api_pref_save(request: Request):
+        if not secrets.compare_digest(request.headers.get("x-qm-csrf", ""), csrf):
+            return JSONResponse({"error": "Missing or stale page token. Reload the page."}, status_code=403)
+        try:
+            body = await request.json()
+            new_hash = set_pref(settings.vault, str(body["key"]), str(body["value"]), str(body.get("hash", "")))
+        except EditRefused as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        except (ValueError, KeyError, TypeError):
+            return JSONResponse({"error": "Malformed save."}, status_code=400)
+        return JSONResponse({"hash": new_hash})
 
     async def chat_view(request: Request):
         return HTMLResponse(chat_page(settings, csrf))
@@ -753,6 +872,7 @@ def build_app(settings: Settings, token: str | None = None, hosts: tuple[str, ..
         Route("/settings", guarded(settings_view)),
         Route("/architecture", guarded(architecture)),
         Route("/api/file", guarded(api_file_save), methods=["POST"]),
+        Route("/api/pref", guarded(api_pref_save), methods=["POST"]),
         Route("/brain", guarded(brain_page)),
         Route("/api/brain", guarded(api_brain)),
         Route("/api/brain/note", guarded(api_brain_note)),

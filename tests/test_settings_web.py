@@ -68,6 +68,53 @@ def test_effective_prefs_mark_what_you_set(vault):
     assert rows["digest.weekday"] == ('"sunday"', False)
 
 
+def test_set_pref_edits_one_value_and_keeps_comments(vault):
+    toml = vault / "90-System" / "config.toml"
+    toml.write_text("# mine\n[digest]\nhour = 7  # evenings\n\n[home]\nlabel = \"STL\"\n", "utf-8")
+    web.set_pref(vault, "digest.hour", "9", web.file_hash(toml))
+    # A default not in the file yet: a new section is added at the end.
+    web.set_pref(vault, "chat.fresh_after_minutes", "30", web.file_hash(toml))
+    # A missing key in an existing section goes into that section; quotes optional for strings.
+    web.set_pref(vault, "digest.weekday", "saturday", web.file_hash(toml))
+    text = toml.read_text("utf-8")
+    assert text.startswith("# mine\n[digest]\nhour = 9\nweekday = \"saturday\"\n")
+    assert text.endswith('[chat]\nfresh_after_minutes = 30\n')
+    rows = {key: (value, yours) for key, value, yours in web.effective_prefs(vault)}
+    assert rows["chat.fresh_after_minutes"] == ("30", True) and rows["home.label"] == ('"STL"', True)
+
+
+def test_set_pref_refuses_wrong_types_lists_and_stale_hashes(vault):
+    toml = vault / "90-System" / "config.toml"
+    h = web.file_hash(toml)
+    with pytest.raises(web.EditRefused, match="whole number"):
+        web.set_pref(vault, "digest.hour", "evening", h)
+    with pytest.raises(web.EditRefused, match="list"):
+        web.set_pref(vault, "events.bands", "[]", h)
+    with pytest.raises(web.EditRefused, match="can't be set"):
+        web.set_pref(vault, "digest.nope", "1", h)
+    with pytest.raises(web.EditRefused, match="changed since"):
+        web.set_pref(vault, "digest.hour", "8", "stale")
+    assert toml.read_text("utf-8") == "[digest]\nhour = 7\n"
+
+
+def test_pref_endpoint_needs_the_page_token(client, vault):
+    html = client.get("/settings").text
+    assert "data-pref" in html
+    toml = vault / "90-System" / "config.toml"
+    body = {"key": "chat.fresh_after_minutes", "value": "15", "hash": web.file_hash(toml)}
+    assert client.post("/api/pref", json=body).status_code == 403
+    assert client.post("/api/pref", json=body, headers={"X-QM-CSRF": csrf_of(html)}).status_code == 200
+    assert "fresh_after_minutes = 15" in toml.read_text("utf-8")
+
+
+def test_chat_pref_is_read_fresh_each_turn(vault):
+    from quartermaster.config import current_prefs
+    s = Settings(vault=vault, prefs=DEFAULTS)
+    assert current_prefs(s)["chat"]["fresh_after_minutes"] == 5
+    (vault / "90-System" / "config.toml").write_text("[chat]\nfresh_after_minutes = 0\n", "utf-8")
+    assert current_prefs(s)["chat"]["fresh_after_minutes"] == 0
+
+
 def test_secrets_show_set_or_not_never_values(monkeypatch):
     monkeypatch.setenv("NOTION_TOKEN", "ntn_supersecret")
     monkeypatch.delenv("KLIPY_API_KEY", raising=False)

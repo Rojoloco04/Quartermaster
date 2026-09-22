@@ -183,6 +183,18 @@ class Settings:
             )
 
 
+def current_prefs(settings: Settings) -> dict:
+    """Preferences as config.toml says right now, for what a long-running
+    process should pick up without a restart. Falls back to what was loaded at
+    startup if the file is gone or doesn't parse."""
+    config_file = settings.system_dir / "config.toml"
+    try:
+        with config_file.open("rb") as fh:
+            return _deep_merge(DEFAULTS, tomllib.load(fh))
+    except (OSError, tomllib.TOMLDecodeError):
+        return settings.prefs
+
+
 def load_settings(vault_override: Path | None = None) -> Settings:
     load_dotenv(REPO_ROOT / ".env")
 

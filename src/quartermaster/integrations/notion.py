@@ -147,6 +147,11 @@ class NotionClient:
             "insert_content": {"content": markdown, "position": {"type": "end"}},
         })
 
+    def trash_page(self, page_id: str) -> None:
+        """Move a page (and every page under it) to Notion's trash, where the
+        owner can restore it. Nothing here deletes permanently."""
+        self._request("PATCH", f"/pages/{page_id}", json={"in_trash": True})
+
     def page_markdown(self, page_id: str) -> PageMarkdown:
         data = self._request("GET", f"/pages/{page_id}/markdown")
         return PageMarkdown(

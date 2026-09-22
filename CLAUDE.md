@@ -4,7 +4,7 @@ What exists and why. The rules here are binding: read this before changing
 anything. `docs/GUIDE.md` is how to use it (also served by `qm web`);
 `docs/ROADMAP.md` is what's planned and what was rejected.
 
-State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 304 tests.
+State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 310 tests.
 
 **Open right now**
 - Phase 5 infra: a service wrapper (restarting by hand leaves stale instances),
@@ -12,8 +12,9 @@ State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 304 tests.
 - Last.fm is configured but the account started 2026-09-22 with 0 scrobbles, so
   it adds nothing until Spotify scrobbling fills it. Spotify stays until then
   (queued: remove it once Last.fm can replace it).
-- Not yet exercised live: `record_lesson` (correct the bot in a DM, check
-  `facts/lessons.md`), a real (non-dry) `qm reconcile` run (first scheduled
+- Not yet exercised live: `propose_notion_delete` (the Quartermaster page
+  under the Claude page is the first target), `record_lesson` (correct the bot
+  in a DM, check `facts/lessons.md`), a real (non-dry) `qm reconcile` run (first scheduled
   07:30 2026-09-23; its dry run found two real conflicts), `sync_notion` from a
   DM, and a save from the /settings editor in a browser (API tested, JS only
   syntax-checked).
@@ -276,7 +277,11 @@ Confirm/Cancel, and code applies it only on Confirm. The button is the gate: an
 email the agent read can produce a proposal, it cannot approve one. Rows stay
 `pending` across restarts, the view never times out (a proposal made overnight
 is still there in the morning), and a `replace` saves the page's current
-markdown into the vault's `notion-backups/` first. A restart re-offers anything
+markdown into the vault's `notion-backups/` first. `propose_notion_delete` goes
+the same way for any page, Claude sub-pages included (never the Claude page
+itself): on Confirm the page is backed up like a replace, then moved to Notion's
+trash (`in_trash`, restorable, takes its sub-pages with it); the next sync
+drops it from the mirror. A restart re-offers anything
 still pending, so an earlier message's buttons stop responding - the newest DM
 for that change is the live one. Losing a proposal is worse than a duplicate.
 
@@ -318,7 +323,11 @@ visible and editable without opening the vault: preferences in force (defaults
 merged with `config.toml`, read fresh, each marked yours/default), `.env` keys
 as set/not set (never values, never editable), and in-place editors for
 `config.toml`, `CLAUDE.md`, `muted.md`, `dev-queue.md` and `facts/*.md` (also
-from the brain panel). `web.EDITABLE` is the whole writable set; the Notion
+from the brain panel). Each scalar `table.key` preference also has its own
+Change button (`web.set_pref`): a line-level edit of `config.toml` that keeps
+comments, types the value like its current one, and is re-parsed to confirm it
+landed. `chat.*` is read fresh each turn (`config.current_prefs`), so it needs
+no restart; other preferences still do. `web.EDITABLE` is the whole writable set; the Notion
 mirror is not in it (the next sync would overwrite it). A save is refused if the
 file's hash changed since it was loaded (the agent may have written), TOML must
 parse, writes are atomic, and each is logged. Guards: `TrustedHostMiddleware`

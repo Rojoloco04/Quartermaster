@@ -100,8 +100,8 @@ def propose_notion_edit(page_id: str, markdown: str, mode: str = "append", why: 
     from .. import db, notion_writes
 
     s = settings()
-    if mode not in notion_writes.MODES:
-        raise ToolError('mode must be "append" or "replace".')
+    if mode not in ("append", "replace"):
+        raise ToolError('mode must be "append" or "replace". To delete a page, use propose_notion_delete.')
     with db.session(s.db_path) as conn:
         row = conn.execute(
             "SELECT title FROM notion_pages WHERE page_id = ? AND archived = 0",
@@ -118,6 +118,38 @@ def propose_notion_edit(page_id: str, markdown: str, mode: str = "append", why: 
             raise ToolError(str(exc)) from exc
     return (
         f"Proposed as change #{write_id} ({mode} to '{row['title']}'). Nothing is written yet: "
+        "the owner gets Confirm/Cancel in Discord. Tell them it's waiting."
+    )
+
+
+@server.tool()
+def propose_notion_delete(page_id: str, why: str = "") -> str:
+    """Propose deleting a Notion page, anywhere including under the Claude
+    page. Nothing is deleted now: the owner gets Confirm/Cancel in Discord, and
+    on Confirm the page and every page under it go to Notion's trash
+    (restorable there), after its contents are saved to the vault. page_id is
+    the notion_id from the page's frontmatter in the vault's notion/ folder.
+    Say in `why` what it's for, in one line. The Claude page itself can't be
+    deleted this way."""
+    from .. import db, notion_writes
+
+    s = settings()
+    target = notion_writes._norm(page_id)
+    if target == notion_writes._norm(s.prefs["notion"].get("claude_page_id") or ""):
+        raise ToolError("That's the Claude page itself; the owner deletes it in Notion "
+                        "and clears notion.claude_page_id in config.toml.")
+    with db.session(s.db_path) as conn:
+        row = conn.execute(
+            "SELECT title FROM notion_pages WHERE page_id = ? AND archived = 0", (target,),
+        ).fetchone()
+        if row is None:
+            raise ToolError(
+                "No mirrored page with that id. Use the notion_id from the page's "
+                "frontmatter in the vault's notion/ folder, and run sync_notion if it is new."
+            )
+        write_id = notion_writes.propose(conn, page_id, row["title"], "delete", "", why)
+    return (
+        f"Proposed as change #{write_id} (delete '{row['title']}'). Nothing is deleted yet: "
         "the owner gets Confirm/Cancel in Discord. Tell them it's waiting."
     )
 
