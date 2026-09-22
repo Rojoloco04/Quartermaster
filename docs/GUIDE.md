@@ -24,8 +24,14 @@ with `claude --continue`.
 
 What it can reach: your vault (read and write), the web, Google Calendar and
 Gmail (Gmail is read-only), Microsoft To Do (including checklist steps), Spotify
-(read-only), and your `Claude` page in Notion. It can't touch the rest of Notion:
-it proposes changes in `90-System/pending.md` instead. It can't change its own
+(read-only), and Notion.
+
+In Notion it writes to your `Claude` page and its sub-pages freely. For any
+other page it proposes the change and you get a DM with Confirm/Cancel; nothing
+is written unless you press Confirm, and a page it replaces is backed up into
+the vault first. Sunday mornings it proposes a tidied Claude page with stale
+entries removed, which you confirm the same way (`qm tidy --dry-run` previews
+it). It can't change its own
 code, schedules or `.env`, and it will tell you so rather than pretend.
 
 ## Muting

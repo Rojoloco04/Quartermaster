@@ -54,8 +54,10 @@ class ConfirmView(discord.ui.View):
     the safe default for an irreversible action is for it not to happen.
     """
 
-    def __init__(self, invoker_id: int):
-        super().__init__(timeout=CONFIRM_TIMEOUT)
+    def __init__(self, invoker_id: int, timeout: float | None = CONFIRM_TIMEOUT):
+        # timeout=None for approvals that may sit until the owner wakes up; a
+        # moderation preview keeps the short one, where timing out declines.
+        super().__init__(timeout=timeout)
         self.invoker_id = invoker_id
         self.approved: bool | None = None
 

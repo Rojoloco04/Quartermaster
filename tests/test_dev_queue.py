@@ -15,9 +15,23 @@ def test_add_tags_the_source_and_list_shows_open_items(tmp_path: Path):
     assert [text for _, text in dev_queue.open_items(path)] == ["retry Spotify once on a 5xx (noticed)"]
 
 
-def test_the_owner_agent_may_append_to_the_queue(tmp_path: Path):
-    # Nothing works the queue unattended, so a person reviews every item: the
-    # agent writing here is how "make the digest shorter" gets queued at all.
+def test_agents_queue_only_through_the_tool(tmp_path: Path):
+    # A remembered file convention was ignored in real use; a tool is not. The
+    # file itself is protected so every entry is one tagged, reviewable line.
     owner = agent.owner_profile(Settings(vault=tmp_path))
-    assert agent.check_tool(owner, "Edit", {"file_path": "90-System/dev-queue.md"}) is None
-    assert "dev-queue.md" in agent.OWNER_LIMITS and "(noticed)" in agent.OWNER_LIMITS
+    assert agent.check_tool(owner, "mcp__qm__queue_change", {}) is None
+    assert agent.check_tool(owner, "Edit", {"file_path": "90-System/dev-queue.md"})
+    assert "queue_change" in agent.OWNER_LIMITS
+
+
+def test_queue_change_tool_tags_and_dedupes(tmp_path: Path, monkeypatch):
+    from quartermaster import servers
+    from quartermaster.servers import qm
+
+    monkeypatch.setattr(servers, "settings", lambda: Settings(vault=tmp_path))
+    monkeypatch.setattr(qm, "settings", lambda: Settings(vault=tmp_path))
+    assert "Queued (1 open)" in qm.queue_change("Add weather to the digest")
+    assert qm.queue_change("add weather to the digest") == "Already in the dev queue."
+    qm.queue_change("Retry Spotify on a 5xx", source="noticed")
+    texts = [t for _, t in dev_queue.open_items(dev_queue.queue_path(Settings(vault=tmp_path)))]
+    assert texts == ["Add weather to the digest (you)", "Retry Spotify on a 5xx (noticed)"]

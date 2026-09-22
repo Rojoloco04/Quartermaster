@@ -134,6 +134,13 @@ class NotionClient:
             "markdown": markdown,
         })
 
+    def replace_markdown(self, page_id: str, markdown: str) -> None:
+        """Overwrite a page's content. Only ever called after the owner has
+        approved it in Discord, and after the old content is backed up."""
+        self._request("PATCH", f"/pages/{page_id}/markdown", json={
+            "type": "replace_content", "replace_content": markdown,
+        })
+
     def append_markdown(self, page_id: str, markdown: str) -> None:
         self._request("PATCH", f"/pages/{page_id}/markdown", json={
             "type": "insert_content",

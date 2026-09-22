@@ -120,9 +120,52 @@ class Quartermaster(discord.Client):
         self._busy = asyncio.Lock()
         self._turn: asyncio.Task | None = None  # the running owner/public turn, for !stop
         self._fresh = False  # set by !new
+        self._pending_asks: set[asyncio.Task] = set()  # approval DMs in flight
 
     async def setup_hook(self) -> None:
         self._heartbeat = asyncio.create_task(self._beat())
+        self._approvals = asyncio.create_task(self._watch_approvals())
+
+    async def _watch_approvals(self) -> None:
+        """DM the owner about Notion changes waiting on them.
+
+        The gate is this button press. A proposal can come from anything the
+        agent read; applying it cannot. Rows stay 'pending' until decided, so a
+        restart re-offers them rather than losing them.
+        """
+        from .. import db, notion_writes
+
+        await self.wait_until_ready()
+        offered: set[int] = set()
+        while True:
+            try:
+                with db.session(self.settings.db_path) as conn:
+                    waiting = [r for r in notion_writes.pending(conn) if r["id"] not in offered]
+                for row in waiting:
+                    offered.add(row["id"])
+                    task = asyncio.create_task(self._ask_approval(row))
+                    self._pending_asks.add(task)
+                    task.add_done_callback(self._pending_asks.discard)
+            except Exception:  # noqa: BLE001 - a bad poll must not end the loop
+                log.exception("checking for pending Notion changes failed")
+            await asyncio.sleep(20)
+
+    async def _ask_approval(self, row) -> None:
+        from .. import db, notion_writes
+
+        owner = await self.fetch_user(self.settings.discord_owner_id)
+        view = moderation.ConfirmView(self.settings.discord_owner_id, timeout=None)
+        summary = notion_writes.preview(row)
+        message = await owner.send(summary, view=view)
+        await view.wait()
+        with db.session(self.settings.db_path) as conn:
+            if view.approved:
+                result = notion_writes.apply(self.settings, conn, row)
+            else:
+                notion_writes.decide(conn, row["id"], "declined")
+                result = "Cancelled. Nothing was written."
+                log.info("owner declined pending write %s", row["id"])
+        await message.edit(content=f"{summary}\n\n{result}", view=None)
 
     async def _beat(self) -> None:
         """Write {pid, at} every 30s so `qm web` can tell a running bot from a dead one."""

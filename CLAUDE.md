@@ -4,7 +4,7 @@ What exists and why. The rules here are binding: read this before changing
 anything. `docs/GUIDE.md` is how to use it (also served by `qm web`);
 `docs/ROADMAP.md` is what's planned and what was rejected.
 
-State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 237 tests.
+State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 247 tests.
 
 ## Working here
 
@@ -60,6 +60,8 @@ src/quartermaster/
 ├── mutes.py          the mute list
 ├── notion_sync.py    one-way Notion pull;  notion_clean.py strips Notion's XML/expiring URLs
 ├── digest.py         digest + presale orchestration;  stale.py stale-page heuristic
+├── notion_writes.py  proposed Notion edits, applied after a Confirm in Discord
+├── claude_tidy.py    weekly: propose a Claude page with the stale parts removed
 ├── schedule.py       Windows Task Scheduler wiring (schtasks.exe)
 ├── discord_ops.py    OpsPlan, permissions, hierarchy, matching (pure, well-tested)
 ├── integrations/     google, microsoft, spotify (OAuth; shared accounts.py),
@@ -86,7 +88,7 @@ vault-template/       copied into a new vault by `qm init`
 there's no service wrapper yet, and two connected instances double-reply.
 
 **Scheduled tasks** (logged-in only): Notion sync 07:00 daily, presale check
-08:00 daily, digest at `digest.hour` daily or weekly. Re-run `qm schedule
+08:00 daily, Claude page tidy Sundays 09:00, digest at `digest.hour` daily or weekly. Re-run `qm schedule
 install` after changing `schedule.py` — the sync task only exists once it has
 been re-installed.
 
@@ -108,7 +110,7 @@ pipe and vanished once already.
 | --- | --- | --- | --- | --- |
 | `cwd` | vault | `workspace("public")` | `workspace("public")` | `workspace("digest")` |
 | `tools` | vault + research + Skill | `[]` | `[]` | `[]` |
-| MCP | google, microsoft, spotify, notion | none | none | none |
+| MCP | google, microsoft, spotify, qm | none | none | none |
 | session | shared with CLI | separate | none | none |
 | enabled | yes | **no** | yes | yes |
 
@@ -166,8 +168,11 @@ asked to fix Quartermaster itself — it once reported a fix it couldn't make.
 ## Dev queue
 
 The vault's `90-System/dev-queue.md`. The owner asks for a change in plain words
-and the owner agent appends it tagged `(you)`; it also queues what it notices
-itself, tagged `(noticed)` (`agent.OWNER_LIMITS`). `qm queue` lists it or adds
+and the owner agent calls the `qm` server's `queue_change` tool, tagged `(you)`;
+it also queues what it notices itself, tagged `(noticed)`. The file is on
+`_PROTECTED`, so the tool is the only way in. (A file-append convention in the
+system prompt was tried first and ignored in real use: the agent went looking
+for the code instead. Tools get used; conventions get forgotten.) `qm queue` lists it or adds
 from a terminal. It is worked only by hand in Claude Code (see "Work the dev
 queue" above), which is what makes an agent that reads email and the web safe to
 write here: a person judges every item, `(noticed)` ones sceptically. An
@@ -183,13 +188,27 @@ as aliases). Prefer extending the model's instructions over adding commands.
 
 ## Notion writes
 
-The agent writes to exactly one place in Notion: the page at
-`notion.claude_page_id` (config.toml) and its direct sub-pages, through the
-`notion` MCP server (`read_claude_page`, `append_to_claude_page`,
-`create_claude_subpage`). `integrations/claude_page.py` checks every target's
-parent in code before writing. Everything else in Notion is a proposal in
-`90-System/pending.md`. The Notion integration needs "Insert content".
-Live-verified: an out-of-scope write is refused before any request is sent.
+Two paths, and the difference is who approves.
+
+**The Claude page** (`notion.claude_page_id` in config.toml) and its direct
+sub-pages are the agent's own: written directly through the `qm` server
+(`read_claude_page`, `append_to_claude_page`, `create_claude_subpage`).
+`integrations/claude_page.py` checks every target's parent in code, so an
+out-of-scope write is refused before any request is sent (live-verified).
+
+**Every other page** goes through `propose_notion_edit`, which writes nothing:
+it stores a row in `pending_writes` (`notion_writes.py`). The bot's
+`_watch_approvals` loop DMs the owner a preview built from the row's fields with
+Confirm/Cancel, and code applies it only on Confirm. The button is the gate: an
+email the agent read can produce a proposal, it cannot approve one. Rows stay
+`pending` across restarts, the view never times out (a proposal made overnight
+is still there in the morning), and a `replace` saves the page's current
+markdown into the vault's `notion-backups/` first.
+
+**Tidying** (`claude_tidy.py`, `qm tidy`, Sundays 09:00): one model call
+rewrites the Claude page without its stale parts and *proposes* the replace. A
+rewrite that would cut the page by more than 60% is dropped rather than shown -
+a tidy prunes, it doesn't gut. The Notion integration needs "Insert content".
 
 ## Mutes
 

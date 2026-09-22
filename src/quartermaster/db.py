@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 -- One row per mirrored Notion page. Lets the daily pull skip unchanged pages
@@ -72,6 +72,24 @@ CREATE TABLE IF NOT EXISTS events_seen (
     first_seen TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_start ON events_seen(starts_at);
+
+-- Notion edits outside the Claude page, waiting for the owner to press
+-- Confirm in Discord. Nothing here is irreplaceable: an unapproved proposal
+-- that is lost was never applied, and an applied one is in Notion (with the
+-- replaced content backed up into the vault).
+CREATE TABLE IF NOT EXISTS pending_writes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    page_id    TEXT NOT NULL,
+    page_title TEXT,
+    mode       TEXT NOT NULL,    -- 'append' | 'replace'
+    content    TEXT NOT NULL,
+    why        TEXT,
+    source     TEXT,             -- 'agent' | 'tidy'
+    status     TEXT NOT NULL,    -- 'pending' | 'applied' | 'declined' | 'failed'
+    created_at TEXT NOT NULL,
+    decided_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pending_status ON pending_writes(status, id);
 """
 
 

@@ -16,13 +16,18 @@ from pathlib import Path
 from .config import Settings
 
 SYNC_TASK = "Quartermaster Notion Sync"
+TIDY_TASK = "Quartermaster Claude Page Tidy"
 DIGEST_TASK = "Quartermaster Digest"
 PRESALE_TASK = "Quartermaster Presale Check"
-TASKS = (SYNC_TASK, DIGEST_TASK, PRESALE_TASK)
+TASKS = (SYNC_TASK, TIDY_TASK, DIGEST_TASK, PRESALE_TASK)
 
 # Before the presale check and the digest, so the stale-page scan reads a
 # mirror that is at most a day old.
 SYNC_HOUR = 7
+
+# Weekly, Sunday morning: the owner is around to confirm the replace, and it
+# lands well before the Sunday evening digest.
+TIDY_DAY, TIDY_HOUR = "SUN", 9
 
 # A same-day presale ping only helps if it lands before the ticket window
 # it's warning about - early morning, well ahead of typical on-sale times.
@@ -61,6 +66,7 @@ def build_tasks(settings: Settings, digest_cadence: str) -> list[ScheduledTask]:
 
     return [
         ScheduledTask(SYNC_TASK, [qm, "sync"], ["/sc", "daily", "/st", f"{SYNC_HOUR:02d}:00"]),
+        ScheduledTask(TIDY_TASK, [qm, "tidy"], ["/sc", "weekly", "/d", TIDY_DAY, "/st", f"{TIDY_HOUR:02d}:00"]),
         ScheduledTask(DIGEST_TASK, [qm, "digest"], digest_schedule),
         ScheduledTask(
             PRESALE_TASK, [qm, "presale-check"], ["/sc", "daily", "/st", f"{PRESALE_HOUR:02d}:00"]

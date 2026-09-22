@@ -2,7 +2,8 @@
 
 Each runs as ``qm mcp <name>`` over stdio, so the Discord bot (via the Agent
 SDK) and ``claude`` in a terminal (via the vault's .mcp.json) share one
-implementation and the same tokens. The server modules are thin on purpose:
+implementation and the same tokens. ``qm`` holds Quartermaster's own tools
+(the Notion Claude page and the dev queue). The server modules are thin on purpose:
 validation, formatting and scope guarantees live in ``integrations``.
 """
 
