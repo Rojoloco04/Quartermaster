@@ -93,6 +93,27 @@ def remove() -> list[str]:
     return run
 
 
+def task_info() -> list[dict]:
+    """Name, last run, last result and next run of each task, for the dashboard.
+    A task that isn't registered comes back with "not scheduled"."""
+    wanted = {"Last Run Time": "last_run", "Last Result": "last_result", "Next Run Time": "next_run"}
+    rows = []
+    for name in TASKS:
+        row = {"name": name, "last_run": "not scheduled", "last_result": "", "next_run": ""}
+        result = subprocess.run(
+            ["schtasks", "/query", "/tn", name, "/fo", "list", "/v"], capture_output=True, text=True
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                key, _, value = line.partition(":")
+                if key.strip() in wanted:
+                    row[wanted[key.strip()]] = value.strip()
+            if row["last_result"] == "267011":  # SCHED_S_TASK_HAS_NOT_RUN, with a 1999 placeholder date
+                row.update(last_run="never", last_result="")
+        rows.append(row)
+    return rows
+
+
 def status() -> str:
     parts: list[str] = []
     for name in TASKS:

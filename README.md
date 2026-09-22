@@ -3,7 +3,8 @@
 A personal agent: a weekly digest, a Notion-mirrored memory, and one
 conversation you can reach from Discord or from Claude Code.
 
-`HANDOFF.md` explains what exists and why; `docs/ROADMAP.md` covers what's next.
+`docs/GUIDE.md` is how to use it (`qm web` serves it too). `HANDOFF.md` explains
+what exists and why; `docs/ROADMAP.md` covers what's next.
 
 ## Three rules
 

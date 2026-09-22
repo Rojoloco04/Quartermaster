@@ -16,7 +16,9 @@ to share *some* guild with you before it can DM. Your normal server does that.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import time
 from dataclasses import replace
 from pathlib import PurePath
@@ -109,6 +111,22 @@ class Quartermaster(discord.Client):
         self._busy = asyncio.Lock()
         self._turn: asyncio.Task | None = None  # the running owner/public turn, for !stop
         self._fresh = False  # set by !new
+
+    async def setup_hook(self) -> None:
+        self._heartbeat = asyncio.create_task(self._beat())
+
+    async def _beat(self) -> None:
+        """Write {pid, at} every 30s so `qm web` can tell a running bot from a dead one."""
+        from .web import heartbeat_path
+
+        path = heartbeat_path(self.settings)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        while True:
+            try:
+                path.write_text(json.dumps({"pid": os.getpid(), "at": time.time()}), encoding="utf-8")
+            except OSError:
+                log.warning("could not write heartbeat to %s", path)
+            await asyncio.sleep(30)
 
     async def on_ready(self) -> None:
         # Logging rather than print: print() is block-buffered when stdout is a

@@ -19,7 +19,6 @@ venv/
 *.db-journal
 *.db-wal
 *.db-shm
-public-workspace/
 
 # The app's own log lives in %LOCALAPPDATA%\quartermaster\Logs - a *.log here
 # means someone redirected a manual run's output into the repo by hand.

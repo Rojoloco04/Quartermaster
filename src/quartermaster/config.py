@@ -143,15 +143,22 @@ class Settings:
 
         return user_log_path("quartermaster", appauthor=False) / "quartermaster.log"
 
+    def workspace(self, name: str) -> Path:
+        """A working directory for a profile that must not run in the vault.
+
+        Per-user, outside both repos, and never derived from ``self.vault``.
+        Two reasons: containment (the public and parser profiles must not load
+        the vault), and session hygiene - every run leaves a session file for
+        its cwd, and ``--continue`` resumes the newest one there, so a digest
+        run in the vault would hijack the owner's shared conversation.
+        """
+        from platformdirs import user_data_path
+
+        return user_data_path("quartermaster", appauthor=False) / "workspaces" / name
+
     @property
     def public_workspace(self) -> Path:
-        """Working directory for the public agent profile.
-
-        Deliberately outside the vault. It is the containment boundary for
-        anyone who is not the owner, so it must never be derived from
-        ``self.vault``.
-        """
-        return REPO_ROOT / "public-workspace"
+        return self.workspace("public")
 
     def require(self, *names: str) -> None:
         """Fail early and by name when a secret a task needs is absent.

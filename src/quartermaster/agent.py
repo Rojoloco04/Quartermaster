@@ -216,19 +216,21 @@ def digest_profile(settings: Settings) -> Profile:
 
     No tools: collectors are plain Python that do no reasoning, so by the time
     this profile is asked anything it has everything it needs in the prompt.
-    ``cwd`` is still the vault so CLAUDE.md's tone rules load the normal way,
-    even though an empty ``tools`` list means nothing can actually be read.
-    Not a shared session - a weekly structured-data dump doesn't belong in the
-    thread the owner continues from the terminal.
+    Its ``cwd`` is NOT the vault: every run leaves a session file for its cwd,
+    and ``--continue`` resumes the newest one, so a digest run there made the
+    owner's next DM continue the digest instead of their own thread. The
+    vault's CLAUDE.md (tone rules) is passed in directly instead.
     """
+    claude_md = settings.vault / "CLAUDE.md"
+    rules = claude_md.read_text(encoding="utf-8") if claude_md.exists() else ""
     return Profile(
         name="digest",
-        cwd=settings.vault,
+        cwd=settings.workspace("digest"),
         tools=[],
         allowed_tools=[],
         share_session=False,
         max_turns=1,
-        system_append=DISCORD_STYLE,
+        system_append=DISCORD_STYLE + (f"\n\nThe owner's standing instructions:\n{rules}" if rules else ""),
     )
 
 

@@ -1,9 +1,10 @@
 # Quartermaster — handoff
 
 Written for: the next agent or developer picking this up cold. This file covers
-what exists and why; what's planned is in `docs/ROADMAP.md`.
+what exists and why; what's planned is in `docs/ROADMAP.md`; how to use it is
+`docs/GUIDE.md` (also served by `qm web`).
 
-State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 219 tests.
+State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 230 tests.
 
 ## What this is
 
@@ -33,7 +34,7 @@ content, don't `--no-verify` past it.
 
 ```
 src/quartermaster/
-├── cli.py            qm doctor/init/sync/bot/digest/presale-check/schedule/mute/auth/mcp
+├── cli.py            qm doctor/init/sync/bot/web/digest/presale-check/schedule/mute/auth/mcp
 ├── config.py         secrets from .env, preferences from the vault's 90-System/config.toml
 ├── agent.py          Agent SDK wrapper; Profile + check_tool are the security boundary
 ├── db.py             state.db — machine state only, rebuildable
@@ -45,8 +46,8 @@ src/quartermaster/
 ├── integrations/     google, microsoft, spotify (OAuth; shared accounts.py),
 │                     notion (REST), claude_page (scoped writes), ticketmaster, prices
 ├── servers/          MCP servers over stdio (`qm mcp <name>`); shared helpers in __init__
-└── surfaces/         discord_bot (routing), moderation (preview/confirm/execute),
-                      digest_send (one-shot DM for scheduled jobs)
+└── surfaces/         discord_bot (routing, streaming, !stop/!new), moderation
+                      (preview/confirm/execute), digest_send (one-shot DM), web (qm web)
 vault-template/       copied into a new vault by `qm init`
 ```
 
@@ -84,7 +85,7 @@ pipe and vanished once already.
 
 | | owner (DMs) | public (channels) | parser | digest |
 | --- | --- | --- | --- | --- |
-| `cwd` | vault | outside it | outside it | vault |
+| `cwd` | vault | `workspace("public")` | `workspace("public")` | `workspace("digest")` |
 | `tools` | vault + research + Skill | `[]` | `[]` | `[]` |
 | MCP | google, microsoft, spotify, notion | none | none | none |
 | session | shared with CLI | separate | none | none |
@@ -159,6 +160,16 @@ me about Tool" silences both the digest line and the presale ping. There is no
 "not interested" list anywhere else: `facts/interests.md` holds positives only
 (the presale matcher also ignores any "Not interested" heading, defensively).
 
+## Dashboard (`qm web`)
+
+`surfaces/web.py`, Starlette + uvicorn (already present via `mcp`). Read-only:
+bot status (from `bot.heartbeat`, written every 30s by the bot next to the log),
+scheduled jobs (`schedule.task_info`), recent turns parsed from the log, the
+newest shared-session transcript (labelled discord vs terminal by its
+`entrypoint`), a polling log tail, digests, mutes, and `docs/GUIDE.md`. Binds
+127.0.0.1; any other host requires `QM_WEB_TOKEN` (cookie after `/?token=`),
+because the log and transcripts hold DMs and email snippets.
+
 ## Session sharing
 
 The owner profile runs with `cwd` = the vault, like `claude` in a terminal, so
@@ -166,6 +177,13 @@ both write to the same `~/.claude/projects/<encoded-vault>/`, and
 `continue_conversation=True` picks up the other surface's last turn. That's why
 `agent.ask()` calls `query()` per turn instead of holding a `ClaudeSDKClient`.
 Sync is turn-level, not live. Verified with one session file holding both.
+
+**Nothing else may run with `cwd` = the vault.** Every SDK run leaves a session
+file for its cwd and `--continue` resumes the newest, so the digest (which used
+to run there) made the next DM continue the digest. Non-owner profiles use
+`Settings.workspace(name)` (per-user data dir); the digest gets the vault's
+CLAUDE.md through its system prompt instead. `!new` works by running one turn
+without `continue_conversation`, which makes a new newest session.
 
 ## The digest (Phase 4)
 

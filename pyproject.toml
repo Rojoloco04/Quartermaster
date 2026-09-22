@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 bot = ["discord.py>=2.4"]
+web = ["starlette>=0.40", "uvicorn>=0.30"]  # qm web (also pulled in by mcp)
 integrations = [
     "google-api-python-client>=2.130",
     "google-auth-oauthlib>=1.2",

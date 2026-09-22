@@ -274,6 +274,13 @@ def cmd_bot(args: argparse.Namespace) -> int:
     return run(load_settings())
 
 
+def cmd_web(args: argparse.Namespace) -> int:
+    from .surfaces.web import serve
+
+    print(f"Dashboard at http://{args.host}:{args.port}/  (Ctrl+C to stop)")
+    return serve(load_settings(), host=args.host, port=args.port)
+
+
 def _run_job(name: str, job, dry_run: bool, sent: str) -> int:
     """Shared by the scheduled jobs: never die silently, always say what happened."""
     try:
@@ -393,6 +400,11 @@ def main(argv: list[str] | None = None) -> int:
     p_sync.set_defaults(func=cmd_sync)
 
     sub.add_parser("bot", help="run the Discord bot").set_defaults(func=cmd_bot)
+
+    p_web = sub.add_parser("web", help="local dashboard: bot status, jobs, turns, live log, guide")
+    p_web.add_argument("--host", default="127.0.0.1", help="non-localhost requires QM_WEB_TOKEN")
+    p_web.add_argument("--port", type=int, default=8766)
+    p_web.set_defaults(func=cmd_web)
 
     p_digest = sub.add_parser("digest", help="build and send the weekly digest")
     p_digest.add_argument(
