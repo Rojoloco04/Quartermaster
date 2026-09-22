@@ -4,7 +4,7 @@ Written for: the next agent or developer picking this up cold. This file covers
 what exists and why; what's planned is in `docs/ROADMAP.md`; how to use it is
 `docs/GUIDE.md` (also served by `qm web`).
 
-State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 230 tests.
+State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 237 tests.
 
 ## What this is
 
@@ -141,6 +141,17 @@ throttled to respect Discord's edit rate limit.
 
 The owner agent can only edit the vault. `OWNER_LIMITS` tells it to say so when
 asked to fix Quartermaster itself — it once reported a fix it couldn't make.
+
+## Dev queue
+
+`!queue <text>` (DM) or `qm queue <text>` appends the owner's words verbatim to
+the vault's `90-System/dev-queue.md`; `!queue` / `qm queue` alone lists it. The
+`!queue` command is handled in code, never by the model, and the file is on
+`agent._PROTECTED`, so nothing an agent reads can queue work. It's worked by hand
+in Claude Code ("work the dev queue"). An unattended overnight runner (worktree,
+shell, push, PR) was built and removed: a shell-holding agent running
+unsupervised with a repo-wide `gh` token is more exposure than the convenience
+is worth. The queue is not GitHub issues because this repo is public.
 
 ## Notion writes
 

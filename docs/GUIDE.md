@@ -13,6 +13,10 @@ with `claude --continue`.
 - `!stop` cancels whatever it's doing.
 - `!new` makes your next message start a fresh conversation. The old one stays
   reachable with `claude --resume` in the vault.
+- `!queue <change>` jots down a change you want to Quartermaster itself, word
+  for word; `!queue` alone lists them. When you have Claude usage to spare, open
+  Claude Code in the Quartermaster repo and say "work the dev queue" (`qm queue`
+  prints the list and the file's path). Nothing works the queue on its own.
 - Start a message with `opus:`, `sonnet:` or `haiku:` to pick the model for that
   one message. Otherwise it picks: Haiku for quick lookups, Sonnet by default,
   Opus for long or hard questions.

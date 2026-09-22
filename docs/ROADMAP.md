@@ -131,6 +131,11 @@ Streaming with NVENC hardware transcoding.
 
 ### Considered and rejected
 
+- **An unattended dev runner** working the `!queue` overnight (worktree, shell,
+  push, PR). Built, then removed: an agent with a shell and a repo-wide GitHub
+  token running unsupervised. The queue is worked in Claude Code with the owner
+  present instead. Revisit only with a sandbox and a single-repo token.
+
 - **n8n.** It was the centre of the original homelab plan. The Agent SDK now owns tool
   use and a scheduler owns timing; keeping n8n would mean two things that both "run
   jobs on a timer", with workflows locked in a database instead of versioned.

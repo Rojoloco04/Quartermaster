@@ -304,6 +304,18 @@ def cmd_digest(args: argparse.Namespace) -> int:
     return _run_job("digest", digest.run_digest, args.dry_run, "Digest sent and archived.")
 
 
+def cmd_queue(args: argparse.Namespace) -> int:
+    from . import dev_queue
+
+    path = dev_queue.queue_path(load_settings())
+    if args.text:
+        dev_queue.add(path, " ".join(args.text))
+        print("Queued.")
+    print(dev_queue.listing(path))
+    print(f"\nFile: {path}")
+    return 0
+
+
 def cmd_presale(args: argparse.Namespace) -> int:
     from . import digest
 
@@ -419,6 +431,10 @@ def main(argv: list[str] | None = None) -> int:
         "--dry-run", action="store_true", help="print what would be sent; don't send or record it"
     )
     p_presale.set_defaults(func=cmd_presale)
+
+    p_queue = sub.add_parser("queue", help="list (or add to) the dev queue of code changes")
+    p_queue.add_argument("text", nargs="*", help="what to change; omit to list the queue")
+    p_queue.set_defaults(func=cmd_queue)
 
     p_schedule = sub.add_parser("schedule", help="manage the Windows Task Scheduler entries")
     p_schedule.add_argument("action", choices=["install", "remove", "status"])

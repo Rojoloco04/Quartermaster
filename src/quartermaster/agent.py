@@ -96,7 +96,10 @@ _PATH_KEYS = {"Read": "file_path", "Write": "file_path", "Edit": "file_path", "G
 
 # Inside the vault, but writing here is code execution on a later run: hooks
 # and MCP servers are launched from .claude/ and .mcp.json, git hooks from .git/.
-_PROTECTED = (".claude", ".mcp.json", ".git")
+_PROTECTED = (".claude", ".mcp.json", ".git", ".githooks",
+              # Only the owner's own `!queue` text may land here: an agent that
+              # could write the dev queue could queue code changes.
+              "90-System/dev-queue.md")
 
 DISCORD_STYLE = (
     "You are replying over Discord. Keep it short - a few sentences unless asked "
@@ -379,9 +382,9 @@ def check_tool(profile: Profile, tool: str, tool_input: dict) -> str | None:
     target = (root / str(tool_input[key])).resolve()
     if target != root and root not in target.parents:
         return f"{tool} is limited to {root}."
-    rel = target.relative_to(root).parts
-    if rel and rel[0] in _PROTECTED and tool not in ("Read", "Glob", "Grep"):
-        return f"{tool} may not change {rel[0]} - it controls what runs on the next start."
+    rel = target.relative_to(root).as_posix()
+    if tool not in ("Read", "Glob", "Grep") and any(rel == p or rel.startswith(p + "/") for p in _PROTECTED):
+        return f"{tool} may not change {rel} - it controls what runs later, or is the owner's alone to write."
     return None
 
 

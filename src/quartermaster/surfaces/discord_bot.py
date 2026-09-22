@@ -221,6 +221,20 @@ class Quartermaster(discord.Client):
     async def command(self, channel: discord.abc.Messageable, text: str) -> bool:
         """Owner DM commands. Returns True if ``text`` was one."""
         word = text.strip().lower()
+        if word == "!queue" or word.startswith("!queue "):
+            # Handled here, never by the model: the queued text is exactly
+            # what the owner typed, so nothing the agent reads can queue work.
+            from .. import dev_queue
+
+            path = dev_queue.queue_path(self.settings)
+            request = text.strip()[len("!queue"):].strip()
+            if not request:
+                await channel.send(dev_queue.listing(path))
+                return True
+            dev_queue.add(path, request)
+            count = len(dev_queue.open_items(path))
+            await channel.send(f"Queued ({count} open). Work through them in Claude Code: \"work the dev queue\".")
+            return True
         if word == "!stop":
             if self._turn is not None and not self._turn.done():
                 self._turn.cancel()
