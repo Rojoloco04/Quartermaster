@@ -12,12 +12,9 @@ State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 310 tests.
 - Last.fm is configured but the account started 2026-09-22 with 0 scrobbles, so
   it adds nothing until Spotify scrobbling fills it. Spotify stays until then
   (queued: remove it once Last.fm can replace it).
-- Not yet exercised live: `propose_notion_delete` (the Quartermaster page
-  under the Claude page is the first target), `record_lesson` (correct the bot
-  in a DM, check `facts/lessons.md`), a real (non-dry) `qm reconcile` run (first scheduled
-  07:30 2026-09-23; its dry run found two real conflicts), `sync_notion` from a
-  DM, and a save from the /settings editor in a browser (API tested, JS only
-  syntax-checked).
+- Not yet exercised live: `record_lesson` (correct the bot in a DM, check
+  `facts/lessons.md`) and a real (non-dry) `qm reconcile` run (first scheduled
+  07:30 2026-09-23; its dry run found two real conflicts).
 - Two obsolete vault files to delete (the permission classifier blocked it):
   `Vault/90-System/pending.md` (nothing reads it; Discord Confirm replaced it)
   and `Vault/digests/2026-09-21.md` (a run from before the API keys were set).
@@ -48,7 +45,10 @@ write refused, the Confirm/Cancel path applying a real Notion append, the
 taste-filtered presale check (1000 events to 3), streaming replies, `qm web`,
 the digest with weather (dry run), `/brain` and `/settings` rendering, the
 Host-header refusal, `qm reconcile --dry-run`, `qm quit` (bot + web, language
-servers spared), and a Notion sync removing 8 pages deleted in Notion.
+servers spared), a Notion sync removing 8 pages deleted in Notion,
+`propose_notion_delete` confirmed from a DM (the Quartermaster page, trashed),
+`sync_notion` from a DM, and a /settings preference edit in the browser
+(`chat.fresh_after_minutes` 5 to 10, picked up without a restart).
 
 ## Working here
 
