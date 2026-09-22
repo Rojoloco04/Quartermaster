@@ -119,6 +119,17 @@ def top_artists(
     return "\n".join(f"- {a['name']}  ({', '.join(a.get('genres', [])[:3]) or 'no genre tags'})" for a in items)
 
 
+def top_artist_names(settings: Settings, account: str | None = None) -> set[str]:
+    """Every top artist across all three time ranges, lowercased - the set the
+    presale ping matches against. Up to 150 names; overlap is common."""
+    sp = _client(settings, resolve_account(settings, account))
+    return {
+        a["name"].lower()
+        for tr in sorted(_TIME_RANGES)
+        for a in sp.current_user_top_artists(limit=50, time_range=tr).get("items", [])
+    }
+
+
 def top_tracks(
     settings: Settings, account: str | None = None, time_range: str = "medium_term", limit: int = 10
 ) -> str:

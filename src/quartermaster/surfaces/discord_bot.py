@@ -17,6 +17,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from pathlib import PurePath
+from urllib.parse import urlparse
 
 import discord
 
@@ -190,22 +193,96 @@ class Quartermaster(discord.Client):
             return
 
         async with self._busy, message.channel.typing():
-            reply = await agent.ask(prompt, profile, self.settings.claude_cli)
-
-        await self._send(message.channel, reply)
-
-    async def _send(self, channel: discord.abc.Messageable, reply: agent.Reply) -> None:
-        if reply.text:
-            for part in split_message(reply.text):
-                await channel.send(part)
+            status = LiveStatus(message.channel)
+            await status.start()
+            try:
+                reply = await agent.ask(prompt, profile, self.settings.claude_cli, on_progress=status.update)
+            finally:
+                await status.done()
 
         if reply.error:
             # Say so rather than leaving a silence that looks like being ignored.
-            await channel.send(f"⚠️ {reply.error}")
-        elif not reply.text:
-            await channel.send(
+            await message.channel.send(f"⚠️ {reply.error}")
+        elif not status.sent_text:
+            await message.channel.send(
                 "(I finished but produced no reply. That's a bug - tell me what you asked.)"
             )
+
+
+def describe_tool(name: str, tool_input: dict) -> str:
+    """One short line for the status message: what the agent is doing now."""
+    path = tool_input.get("file_path") or ""
+    fixed = {
+        "Glob": "Searching the vault", "Grep": "Searching the vault",
+        "TodoWrite": "Planning", "Skill": "Using a skill",
+    }
+    if name in fixed:
+        return fixed[name]
+    if name == "Read":
+        return f"Reading `{PurePath(path).name}`"
+    if name in ("Write", "Edit"):
+        return f"Editing `{PurePath(path).name}`"
+    if name == "WebSearch":
+        return f"Searching the web for \"{str(tool_input.get('query', ''))[:60]}\""
+    if name == "WebFetch":
+        return f"Reading {urlparse(str(tool_input.get('url', ''))).netloc or 'a web page'}"
+    if name.startswith("mcp__"):
+        server, _, tool = name[5:].partition("__")
+        if server == "google":
+            return "Checking email" if "email" in tool else "Checking your calendar"
+        return {"microsoft": "Checking To Do", "spotify": "Checking Spotify"}.get(server, f"Using {tool}")
+    return f"Using {name}"
+
+
+class LiveStatus:
+    """A status line kept at the bottom of the conversation while a turn runs.
+
+    Reply text is sent the moment the agent writes it - an intermediate "let me
+    check" arrives as its own message - and the status line is re-posted
+    beneath it, then deleted when the turn ends. Edits are throttled because
+    Discord rate-limits them (about 5 per 5 seconds per channel).
+    """
+
+    THINKING = "💭 Thinking…"
+    MIN_EDIT_GAP = 1.2
+
+    def __init__(self, channel: discord.abc.Messageable):
+        self.channel = channel
+        self.message: discord.Message | None = None
+        self.sent_text = False
+        self._last_edit = 0.0
+
+    async def start(self) -> None:
+        self.message = await self.channel.send(self.THINKING)
+        self._last_edit = time.monotonic()
+
+    async def update(self, kind: str, payload: object) -> None:
+        if kind == "text":
+            text = str(payload).strip()
+            if not text:
+                return
+            await self._drop()
+            for part in split_message(text):
+                await self.channel.send(part)
+            self.sent_text = True
+            await self.start()
+        elif kind == "tool" and self.message is not None:
+            now = time.monotonic()
+            if now - self._last_edit >= self.MIN_EDIT_GAP:
+                name, tool_input = payload  # type: ignore[misc]
+                self._last_edit = now
+                await self.message.edit(content=f"🔧 {describe_tool(name, tool_input or {})}…")
+
+    async def done(self) -> None:
+        await self._drop()
+
+    async def _drop(self) -> None:
+        if self.message is not None:
+            try:
+                await self.message.delete()
+            except discord.HTTPException:
+                pass  # already gone; nothing to tidy
+            self.message = None
 
 
 def run(settings: Settings | None = None) -> int:

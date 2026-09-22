@@ -3,7 +3,7 @@
 Written for: the next agent or developer picking this up cold. This file covers
 what exists and why; what's planned is in `docs/ROADMAP.md`.
 
-State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 207 tests.
+State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 214 tests.
 
 ## What this is
 
@@ -130,6 +130,17 @@ Deliberate — don't "fix":
   not stand in for the invoker's.
 - `unban` resolves names against the ban list, not members.
 
+## Discord replies stream
+
+`agent.ask(on_progress=...)` reports each text block and tool call as it happens.
+`discord_bot.LiveStatus` sends text immediately (so "let me check" arrives as its
+own message) and keeps a status line ("💭 Thinking…" / "🔧 Checking your
+calendar…") at the bottom, deleted when the turn ends. Status edits are
+throttled to respect Discord's edit rate limit.
+
+The owner agent can only edit the vault. `OWNER_LIMITS` tells it to say so when
+asked to fix Quartermaster itself — it once reported a fix it couldn't make.
+
 ## Session sharing
 
 The owner profile runs with `cwd` = the vault, like `claude` in a terminal, so
@@ -162,8 +173,12 @@ Sonnet). Collectors do no reasoning; the model only phrases.
   `price:<block id>`, `stale:<full page id>`.
 - **`--dry-run`** makes real API calls and records observations (`price_history`,
   `events_seen`) but never increments `surfaced.times_shown`, sends, or archives.
-- **The presale check is quiet**: nothing to report sends nothing; a failure is
-  logged, never DM'd.
+- **The presale check is quiet and taste-filtered.** Ticketmaster returns every
+  public on-sale within 500mi (~1000/day, the deep-paging cap); only events whose
+  billed acts are a Spotify top artist (all three time ranges) or are named as a
+  whole word in `facts/interests.md` are sent, capped at `MAX_PRESALE_LINES`.
+  Unfiltered, it once DM'd ~1000 events. Nothing to report sends nothing; a
+  failure is logged, never DM'd.
 - Repeated dev runs can hit the Pro plan's monthly spend cap; that fails like any
   model error (nothing sent).
 
@@ -178,6 +193,7 @@ outside both repos.
   only the services granted on the consent screen.
 - **Microsoft To Do** — MSAL public client, tenant `consumers`, `Tasks.ReadWrite`.
   Azure app: "Mobile and desktop applications", redirect `http://localhost`.
+  `list_tasks` expands checklist steps; they often hold a task's real content.
   **Never list `openid`/`profile`/`offline_access` in scopes** — MSAL adds them
   and raises `ValueError` if told twice.
 - **Spotify** — read-only (`user-top-read user-library-read`). Redirect URI must

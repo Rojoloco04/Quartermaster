@@ -32,6 +32,7 @@ import asyncio
 import logging
 import sys
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -52,6 +53,11 @@ from claude_agent_sdk import (
 from .config import Settings
 
 log = logging.getLogger(__name__)
+
+# Called as the turn runs: ("text", str) for each block of reply text, and
+# ("tool", (name, input)) for each tool call. Lets a surface stream the reply
+# instead of going silent until the whole turn is done.
+Progress = Callable[[str, object], Awaitable[None]]
 
 # Skill is listed explicitly: the SDK's skills="all" would pre-approve it for
 # every profile, public and parser included.
@@ -96,6 +102,17 @@ DISCORD_STYLE = (
 )
 
 
+# The owner asked this agent to stop a runaway presale ping; it edited
+# interests.md, which that job never read, and reported it fixed. It can only
+# touch the vault, so it has to say so rather than claim a fix.
+OWNER_LIMITS = (
+    "You can read and edit files in this vault only. Quartermaster's own code, "
+    "its scheduled jobs and its .env live outside it and are beyond your reach. "
+    "If asked to fix or change how Quartermaster itself behaves, say plainly "
+    "that you can't, and describe the change for the owner to make in Claude "
+    "Code. Never report a fix you did not make and verify."
+)
+
 @dataclass(frozen=True)
 class Profile:
     """What one caller is allowed to be.
@@ -135,7 +152,7 @@ def owner_profile(settings: Settings) -> Profile:
         allowed_tools=VAULT_TOOLS + RESEARCH_TOOLS + INTEGRATION_TOOLS,
         share_session=True,
         mcp_servers=integration_servers(),
-        system_append=DISCORD_STYLE,
+        system_append=DISCORD_STYLE + " " + OWNER_LIMITS,
     )
 
 
@@ -384,7 +401,9 @@ def _trunc(value: object, limit: int = 300) -> str:
     return text if len(text) <= limit else text[:limit] + f"...[{len(text) - limit} more chars]"
 
 
-async def ask(prompt: str, profile: Profile, cli_path: str | None = None) -> Reply:
+async def ask(
+    prompt: str, profile: Profile, cli_path: str | None = None, on_progress: Progress | None = None
+) -> Reply:
     """Send one message and collect the reply.
 
     Never raises. A surface that dies on a bad turn is worse than one that says
@@ -411,6 +430,14 @@ async def ask(prompt: str, profile: Profile, cli_path: str | None = None) -> Rep
     structured: dict | None = None
     error: str | None = None
 
+    async def emit(kind: str, payload: object) -> None:
+        if on_progress is None:
+            return
+        try:
+            await on_progress(kind, payload)
+        except Exception:  # noqa: BLE001 - a failed status update must not end the turn
+            log.exception("[%s] progress callback failed", turn_id)
+
     async def _drain() -> None:
         nonlocal session_id, cost, structured, error
         # Drain the stream to completion rather than returning from inside it.
@@ -426,8 +453,10 @@ async def ask(prompt: str, profile: Profile, cli_path: str | None = None) -> Rep
                 for block in message.content:
                     if isinstance(block, TextBlock):
                         chunks.append(block.text)
+                        await emit("text", block.text)
                     elif isinstance(block, (ToolUseBlock, ServerToolUseBlock)):
                         log.info("[%s] tool call: %s(%s)", turn_id, block.name, _trunc(block.input))
+                        await emit("tool", (block.name, block.input))
             elif isinstance(message, UserMessage):
                 # Tool results are replayed back through the stream as a
                 # "user" turn - this is the only place a tool's outcome

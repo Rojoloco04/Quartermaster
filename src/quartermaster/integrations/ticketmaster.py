@@ -81,6 +81,9 @@ def _normalize(raw: dict) -> dict:
         "lat": float(lat) if lat is not None else None,
         "lon": float(lon) if lon is not None else None,
         "attraction": attractions[0].get("name") if attractions else None,
+        # Every billed act, not just the headliner - a presale for a show an
+        # artist you follow is opening is still worth hearing about.
+        "attractions": [a["name"] for a in attractions if a.get("name")],
     }
 
 

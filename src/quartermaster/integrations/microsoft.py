@@ -175,7 +175,14 @@ def format_task(task: dict) -> str:
     due = (task.get("dueDateTime") or {}).get("dateTime", "")
     due_part = f"  due {due[:10]}" if due else ""
     done = "x" if task.get("status") == "completed" else " "
-    return f"[{done}] {task.get('title')}{due_part}  (id {task.get('id')})"
+    lines = [f"[{done}] {task.get('title')}{due_part}  (id {task.get('id')})"]
+    notes = ((task.get("body") or {}).get("content") or "").strip()
+    if notes:
+        lines.append(f"    notes: {notes[:300]}")
+    # Checklist steps: often where the real content of a task lives.
+    for step in task.get("checklistItems") or []:
+        lines.append(f"    [{'x' if step.get('isChecked') else ' '}] {step.get('displayName')}")
+    return "\n".join(lines)
 
 
 def list_tasks(
@@ -186,7 +193,9 @@ def list_tasks(
 ) -> str:
     label = resolve_account(settings, account)
     lid = list_id or _default_list_id(settings, label)
-    params = {} if include_completed else {"$filter": "status ne 'completed'"}
+    params = {"$expand": "checklistItems"}
+    if not include_completed:
+        params["$filter"] = "status ne 'completed'"
     items = _request(settings, label, "GET", f"/me/todo/lists/{lid}/tasks", params=params).get("value", [])
     if not items:
         return "No tasks."

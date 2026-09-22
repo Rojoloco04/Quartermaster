@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import sqlite3
 from datetime import date, timedelta
 from pathlib import Path
@@ -28,7 +29,7 @@ from . import agent, db, mutes, stale
 from .config import Settings
 from .integrations import prices, ticketmaster
 from .integrations.google import list_events
-from .integrations.spotify import accounts as spotify_accounts, top_artists
+from .integrations.spotify import accounts as spotify_accounts, top_artist_names, top_artists
 from .surfaces.digest_send import send_dm
 
 log = logging.getLogger(__name__)
@@ -189,8 +190,36 @@ def run_digest(settings: Settings, *, dry_run: bool = False) -> str:
 # --- The daily presale ping ----------------------------------------------------------
 
 
+# A backstop, not the filter: taste matching below is what keeps this short.
+# Without either, one morning's check DM'd ~1000 events.
+MAX_PRESALE_LINES = 10
+
+
+def _taste(settings: Settings) -> tuple[set[str], str]:
+    """(Spotify top artist names, facts/interests.md text), both lowercased."""
+    names: set[str] = set()
+    labels = spotify_accounts(settings)
+    if labels:
+        try:
+            names = top_artist_names(settings, labels[0])
+        except Exception as exc:  # noqa: BLE001 - interests.md still works alone
+            log.warning("presale: spotify taste unavailable: %s", exc)
+    return names, _interests(settings).lower()
+
+
+def matches_taste(event: dict, artists: set[str], interests: str) -> bool:
+    """True if any act on the bill is a Spotify top artist or is named in
+    interests.md (as a whole word, so "Tool" doesn't match "toolbox")."""
+    for act in event.get("attractions") or ([event["attraction"]] if event.get("attraction") else []):
+        name = act.lower()
+        if name in artists or re.search(rf"(?<!\w){re.escape(name)}(?!\w)", interests):
+            return True
+    return False
+
+
 def run_presale_check(settings: Settings, *, dry_run: bool = False) -> str:
-    """Presales opening today. Quiet by design: nothing to report means
+    """Presales opening today for artists the owner actually listens to or has
+    named in facts/interests.md. Quiet by design: nothing to report means
     nothing is sent, and a failed check is logged rather than DM'd - an
     unattended daily job that pings an error every morning is exactly the
     noise both CLAUDE.md's anti-nag rule and the owner rule out. ``--dry-run``
@@ -204,12 +233,19 @@ def run_presale_check(settings: Settings, *, dry_run: bool = False) -> str:
         log.warning("presale check failed: %s", exc)
         return f"(check failed, nothing sent: {exc})" if dry_run else ""
 
+    artists, interests = _taste(settings)
+    wanted = [e for e in events if matches_taste(e, artists, interests)]
+    log.info("presale check: %d on sale today, %d match taste", len(events), len(wanted))
+
     with db.session(settings.db_path) as conn:
         lines = []
-        for event in events:
+        for event in wanted:
             iid = ticketmaster.item_id(event, "presale")
             if mutes.is_muted(iid, mute_list):
                 continue
+            if len(lines) >= MAX_PRESALE_LINES:
+                lines.append(f"...and {len(wanted) - MAX_PRESALE_LINES} more.")
+                break
             if not dry_run:
                 db.record_surfaced(conn, iid, "presale", event["name"])
             lines.append(ticketmaster.format_event(event))
