@@ -157,6 +157,7 @@ class Quartermaster(discord.Client):
         view = moderation.ConfirmView(self.settings.discord_owner_id, timeout=None)
         summary = notion_writes.preview(row)
         message = await owner.send(summary, view=view)
+        log.info("offered pending write %s (%s '%s') to the owner", row["id"], row["mode"], row["page_title"])
         await view.wait()
         with db.session(self.settings.db_path) as conn:
             if view.approved:

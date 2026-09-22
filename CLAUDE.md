@@ -203,7 +203,9 @@ Confirm/Cancel, and code applies it only on Confirm. The button is the gate: an
 email the agent read can produce a proposal, it cannot approve one. Rows stay
 `pending` across restarts, the view never times out (a proposal made overnight
 is still there in the morning), and a `replace` saves the page's current
-markdown into the vault's `notion-backups/` first.
+markdown into the vault's `notion-backups/` first. A restart re-offers anything
+still pending, so an earlier message's buttons stop responding - the newest DM
+for that change is the live one. Losing a proposal is worse than a duplicate.
 
 **Tidying** (`claude_tidy.py`, `qm tidy`, Sundays 09:00): one model call
 rewrites the Claude page without its stale parts and *proposes* the replace. A
