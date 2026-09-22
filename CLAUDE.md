@@ -6,6 +6,21 @@ anything. `docs/GUIDE.md` is how to use it (also served by `qm web`);
 
 State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 247 tests.
 
+**Open right now**
+- Phase 5 infra: a service wrapper (restarting by hand leaves stale instances),
+  scheduled vault push, restic + a verified restore, Uptime Kuma, Tailscale.
+- A feedback loop: reactions and corrections recorded and fed back into the next
+  digest, plus a `facts/lessons.md` the agent appends when corrected. Designed,
+  not built.
+- `LASTFM_API_KEY` / `LASTFM_USER` are unset, so Last.fm adds nothing yet.
+- The dev queue holds "include weather in the digest" — note the roadmap
+  deliberately excluded weather; confirm with the owner before building it.
+
+Verified live on 2026-09-22: tool denial and path confinement, cancelling a turn
+(its CLI subprocess dies with it), scoped Claude page writes, an out-of-scope
+write refused, the Confirm/Cancel path applying a real Notion append, the
+taste-filtered presale check (1000 events to 3), streaming replies, `qm web`.
+
 ## Working here
 
 - This repo is **public**. Personal data belongs in the vault repo; the

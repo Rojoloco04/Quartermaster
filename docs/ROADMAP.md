@@ -108,6 +108,12 @@ Streaming with NVENC hardware transcoding.
   mute/deafen/disconnect, react, say, gif. The model parses; code executes. Gated by
   the invoker's own Discord permissions and role hierarchy. See `CLAUDE.md`.
 
+### Done since
+
+- **`qm web`** dashboard, **streaming Discord replies**, plain-word session
+  control, the **dev queue**, **Last.fm** taste signal, **approved Notion
+  writes** anywhere plus the weekly **Claude page tidy**.
+
 ### Planned
 
 - **Jellyfin notifications** — build as a plain webhook that posts to a channel.
