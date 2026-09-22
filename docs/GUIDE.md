@@ -1,6 +1,6 @@
 # Using Quartermaster
 
-How to use it day to day. `HANDOFF.md` covers how it works inside.
+How to use it day to day. `CLAUDE.md` covers how it works inside.
 
 ## Talking to it
 
@@ -10,13 +10,14 @@ with `claude --continue`.
 
 - It streams: "let me check" arrives as its own message, and a status line at the
   bottom shows what it's doing ("🔧 Checking your calendar…") until it finishes.
-- `!stop` cancels whatever it's doing.
-- `!new` makes your next message start a fresh conversation. The old one stays
-  reachable with `claude --resume` in the vault.
-- `!queue <change>` jots down a change you want to Quartermaster itself, word
-  for word; `!queue` alone lists them. When you have Claude usage to spare, open
-  Claude Code in the Quartermaster repo and say "work the dev queue" (`qm queue`
-  prints the list and the file's path). Nothing works the queue on its own.
+- Say "stop" (or "cancel", "nvm") on its own to cancel whatever it's doing.
+- Say "start fresh" (or "new chat") to begin a new conversation. The old one
+  stays reachable with `claude --resume` in the vault.
+- Want Quartermaster itself changed? Just say so ("the digest is too long"). It
+  can't edit its own code, so it adds the request to its dev queue, and it adds
+  things it notices on its own too, marked "(noticed)". When you have Claude
+  usage to spare, open Claude Code in the Quartermaster repo and say "work the
+  dev queue" (`qm queue` prints the list). Nothing works the queue on its own.
 - Start a message with `opus:`, `sonnet:` or `haiku:` to pick the model for that
   one message. Otherwise it picks: Haiku for quick lookups, Sonnet by default,
   Opus for long or hard questions.

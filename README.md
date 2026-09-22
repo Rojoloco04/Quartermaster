@@ -3,7 +3,7 @@
 A personal agent: a weekly digest, a Notion-mirrored memory, and one
 conversation you can reach from Discord or from Claude Code.
 
-`docs/GUIDE.md` is how to use it (`qm web` serves it too). `HANDOFF.md` explains
+`docs/GUIDE.md` is how to use it (`qm web` serves it too). `CLAUDE.md` explains
 what exists and why; `docs/ROADMAP.md` covers what's next.
 
 ## Three rules
@@ -22,7 +22,7 @@ The bot can sit in a shared server, so who is talking decides which *profile*
 answers — and the profile, not a prompt rule, decides what can be reached.
 A prompt instruction is not a boundary against someone who can send arbitrary
 text. Different working directories, tool lists and a path-checking hook are.
-Details in `HANDOFF.md`.
+Details in `CLAUDE.md`.
 
 The **vault lives outside this repo** (set via `QM_VAULT_PATH`) and is its own
 private git repo. Code and personal data version separately.

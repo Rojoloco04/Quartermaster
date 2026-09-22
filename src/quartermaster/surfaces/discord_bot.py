@@ -19,6 +19,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import replace
 from pathlib import PurePath
@@ -33,6 +34,14 @@ from ..config import Settings, load_settings
 log = logging.getLogger(__name__)
 
 CHUNK = 1900  # Discord's ceiling is 2000; leave room for fence repair.
+
+# Whole-message session controls (see Quartermaster.command). `!stop`/`!new`
+# still work as aliases.
+_STOP = re.compile(r"(stop|cancel|abort|nvm|never ?mind|forget it|hold on|wait,? stop|stop that)[.! ]*")
+_NEW = re.compile(
+    r"(new (chat|conversation|thread|topic)|start (over|fresh|a new (chat|conversation|thread))"
+    r"|fresh (start|chat|conversation)|clean slate|reset( the)? (chat|conversation))[.! ]*"
+)
 
 
 def split_message(text: str, limit: int = CHUNK) -> list[str]:
@@ -219,29 +228,22 @@ class Quartermaster(discord.Client):
         await self.run_turn(message.channel, prompt, profile)
 
     async def command(self, channel: discord.abc.Messageable, text: str) -> bool:
-        """Owner DM commands. Returns True if ``text`` was one."""
-        word = text.strip().lower()
-        if word == "!queue" or word.startswith("!queue "):
-            # Handled here, never by the model: the queued text is exactly
-            # what the owner typed, so nothing the agent reads can queue work.
-            from .. import dev_queue
+        """Session control, in plain words. Returns True if ``text`` was one.
 
-            path = dev_queue.queue_path(self.settings)
-            request = text.strip()[len("!queue"):].strip()
-            if not request:
-                await channel.send(dev_queue.listing(path))
-                return True
-            dev_queue.add(path, request)
-            count = len(dev_queue.open_items(path))
-            await channel.send(f"Queued ({count} open). Work through them in Claude Code: \"work the dev queue\".")
-            return True
-        if word == "!stop":
+        These two stay in code rather than going to the model: "stop" has to
+        work while the model is mid-turn, and "start fresh" changes which
+        session the model is even in. Everything else is the model's to parse.
+        Only a whole, short message counts, so "stop reminding me about X" is
+        still an ordinary request.
+        """
+        word = text.strip().lower()
+        if word == "!stop" or _STOP.fullmatch(word):
             if self._turn is not None and not self._turn.done():
                 self._turn.cancel()
             else:
                 await channel.send("Nothing is running.")
             return True
-        if word == "!new":
+        if word == "!new" or _NEW.fullmatch(word):
             self._fresh = True
             await channel.send(
                 "Your next message starts a fresh conversation. The old one is still "
@@ -254,7 +256,7 @@ class Quartermaster(discord.Client):
         # One turn at a time. Two concurrent turns would both resume the same
         # session and interleave, corrupting the shared thread.
         if self._busy.locked():
-            await channel.send("Still working on the last one - one sec. (`!stop` cancels it.)")
+            await channel.send("Still working on the last one. Say \"stop\" to cancel it.")
             return
 
         async with self._busy, channel.typing():

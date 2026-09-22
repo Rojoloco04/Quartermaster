@@ -1,41 +1,23 @@
-"""The dev queue: only the owner's literal `!queue` text lands in it."""
+"""The dev queue: filled in plain conversation, worked by hand in Claude Code."""
 
 from pathlib import Path
 
 from quartermaster import agent, dev_queue
 from quartermaster.config import Settings
-from quartermaster.surfaces.discord_bot import Quartermaster
 
 
-class Channel:
-    def __init__(self):
-        self.sent: list[str] = []
-
-    async def send(self, content):
-        self.sent.append(content)
-
-
-def test_add_and_list(tmp_path: Path):
+def test_add_tags_the_source_and_list_shows_open_items(tmp_path: Path):
     path = tmp_path / "dev-queue.md"
     assert "empty" in dev_queue.listing(path)
     dev_queue.add(path, "make the   digest\nshorter")
-    dev_queue.add(path, "add a /budget command")
+    dev_queue.add(path, "retry Spotify once on a 5xx", source="noticed")
     path.write_text(path.read_text().replace("- [ ]", "- [x]", 1))  # owner ticks the first off
-    assert [text for _, text in dev_queue.open_items(path)] == ["add a /budget command"]
+    assert [text for _, text in dev_queue.open_items(path)] == ["retry Spotify once on a 5xx (noticed)"]
 
 
-async def test_queue_command_stores_the_owners_exact_text(tmp_path: Path):
-    qm, ch = Quartermaster(Settings(vault=tmp_path)), Channel()
-    assert await qm.command(ch, "!queue stop pinging me before 9am")
-    assert dev_queue.open_items(dev_queue.queue_path(qm.settings))[0][1] == "stop pinging me before 9am"
-    assert await qm.command(ch, "!queue")
-    assert "stop pinging me before 9am" in ch.sent[-1]
-
-
-def test_no_agent_may_write_the_queue(tmp_path: Path):
-    # Otherwise an injected email could queue a code change.
+def test_the_owner_agent_may_append_to_the_queue(tmp_path: Path):
+    # Nothing works the queue unattended, so a person reviews every item: the
+    # agent writing here is how "make the digest shorter" gets queued at all.
     owner = agent.owner_profile(Settings(vault=tmp_path))
-    assert agent.check_tool(owner, "Edit", {"file_path": "90-System/dev-queue.md"})
-    assert agent.check_tool(owner, "Write", {"file_path": str(tmp_path / "90-System" / "dev-queue.md")})
-    assert agent.check_tool(owner, "Read", {"file_path": "90-System/dev-queue.md"}) is None
-    assert agent.check_tool(owner, "Write", {"file_path": "90-System/pending.md"}) is None
+    assert agent.check_tool(owner, "Edit", {"file_path": "90-System/dev-queue.md"}) is None
+    assert "dev-queue.md" in agent.OWNER_LIMITS and "(noticed)" in agent.OWNER_LIMITS

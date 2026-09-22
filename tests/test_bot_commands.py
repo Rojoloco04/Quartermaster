@@ -73,3 +73,14 @@ async def test_new_makes_exactly_one_turn_skip_the_shared_session(tmp_path):
     assert await qm.command(ch, "!new")
     assert qm._fresh
     assert not await qm.command(ch, "what's on today")
+
+
+async def test_plain_words_control_the_session(tmp_path):
+    qm, ch = bot(tmp_path), FakeChannel()
+    for said in ("stop", "Cancel.", "nvm", "never mind", "forget it"):
+        assert await qm.command(ch, said), said
+    assert await qm.command(ch, "start fresh")
+    assert qm._fresh
+    # Only a whole, short message counts - a real request still goes to the model.
+    for request in ("stop reminding me about the Blues", "what's new", "cancel my 3pm"):
+        assert not await qm.command(ch, request), request

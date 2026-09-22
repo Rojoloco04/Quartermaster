@@ -1,7 +1,7 @@
 # Roadmap
 
 Everything planned but not built, with enough design detail to build from. For
-what exists and why it looks the way it does, see `HANDOFF.md`.
+what exists and why it looks the way it does, see `CLAUDE.md`.
 
 | Phase | What | State |
 | --- | --- | --- |
@@ -13,7 +13,7 @@ what exists and why it looks the way it does, see `HANDOFF.md`.
 | 6–10 | Extensions | Planned |
 | — | Added after the original plan | See the end |
 
-Phases 1–4 are described as built in `HANDOFF.md`, including where the build
+Phases 1–4 are described as built in `CLAUDE.md`, including where the build
 deviated from the plan (the wishlist is a Notion page, not a database).
 
 Still open from Phase 4:
@@ -106,7 +106,7 @@ Streaming with NVENC hardware transcoding.
 
 - **Discord moderation and expression** — delete, pin, kick, ban, timeout, voice
   mute/deafen/disconnect, react, say, gif. The model parses; code executes. Gated by
-  the invoker's own Discord permissions and role hierarchy. See `HANDOFF.md`.
+  the invoker's own Discord permissions and role hierarchy. See `CLAUDE.md`.
 
 ### Planned
 

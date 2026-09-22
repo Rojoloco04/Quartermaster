@@ -38,7 +38,7 @@ class ScheduledTask:
 
 def _qm_exe() -> str:
     """The venv's qm.exe, resolved from the interpreter running this code -
-    the same executable `HANDOFF.md` tells the owner to run by hand."""
+    the same executable `CLAUDE.md` tells the owner to run by hand."""
     return str(Path(sys.executable).parent / "qm.exe")
 
 
