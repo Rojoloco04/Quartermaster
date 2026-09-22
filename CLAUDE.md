@@ -4,22 +4,50 @@ What exists and why. The rules here are binding: read this before changing
 anything. `docs/GUIDE.md` is how to use it (also served by `qm web`);
 `docs/ROADMAP.md` is what's planned and what was rejected.
 
-State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 247 tests.
+State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 290 tests.
 
 **Open right now**
 - Phase 5 infra: a service wrapper (restarting by hand leaves stale instances),
   scheduled vault push, restic + a verified restore, Uptime Kuma, Tailscale.
-- A feedback loop: reactions and corrections recorded and fed back into the next
-  digest, plus a `facts/lessons.md` the agent appends when corrected. Designed,
-  not built.
-- `LASTFM_API_KEY` / `LASTFM_USER` are unset, so Last.fm adds nothing yet.
-- The dev queue holds "include weather in the digest" — note the roadmap
-  deliberately excluded weather; confirm with the owner before building it.
+- Last.fm is configured but the account started 2026-09-22 with 0 scrobbles, so
+  it adds nothing until Spotify scrobbling fills it. Spotify stays until then
+  (queued: remove it once Last.fm can replace it).
+- Not yet exercised live: `record_lesson` (correct the bot in a DM, check
+  `facts/lessons.md`), a real (non-dry) `qm reconcile` run (first scheduled
+  07:30 2026-09-23; its dry run found two real conflicts), `sync_notion` from a
+  DM, and a save from the /settings editor in a browser (API tested, JS only
+  syntax-checked).
+- Two obsolete vault files to delete (the permission classifier blocked it):
+  `Vault/90-System/pending.md` (nothing reads it; Discord Confirm replaced it)
+  and `Vault/digests/2026-09-21.md` (a run from before the API keys were set).
+- The vault repo has uncommitted changes (CLAUDE.md, dev queue, the synced
+  mirror); there's no scheduled vault push yet (Phase 5).
+
+**Lessons** (`lessons.py`): the owner agent calls the `qm` server's
+`record_lesson` when corrected; a dated line lands in `facts/lessons.md`, and
+`Profile.lessons_file` appends that file to the system prompt of every owner
+turn and digest, read fresh each turn so the bot needs no restart.
+
+**Keeping knowledge consistent.** Two layers. Immediately: `OWNER_LIMITS` tells
+the owner agent that when a fact changes it greps `facts/` and fixes every
+place that states it (and proposes a Notion edit if Notion is wrong). Daily at
+07:30, `reconcile.py`: one Sonnet call (no tools, `output_schema`) reads facts,
+lessons and the non-empty Notion mirror (~20k tokens) and returns edits and
+conflicts. Code applies edits only to existing `facts/*.md`, skips a file that
+changed mid-run or would lose >60%, and backs up the old version to
+`90-System/backups/reconcile/`. Conflicts overwrite `90-System/conflicts.md`
+(on /settings) and are DM'd as questions; `Profile.conflicts_file` puts them in
+every owner turn, so a plain answer is understood and propagated. Nothing found
+sends nothing. `check_tool` allows `StructuredOutput` for profiles with an
+`output_schema`: denying it made the first live run loop to max_turns.
 
 Verified live on 2026-09-22: tool denial and path confinement, cancelling a turn
 (its CLI subprocess dies with it), scoped Claude page writes, an out-of-scope
 write refused, the Confirm/Cancel path applying a real Notion append, the
-taste-filtered presale check (1000 events to 3), streaming replies, `qm web`.
+taste-filtered presale check (1000 events to 3), streaming replies, `qm web`,
+the digest with weather (dry run), `/brain` and `/settings` rendering, the
+Host-header refusal, `qm reconcile --dry-run`, `qm quit` (bot + web, language
+servers spared), and a Notion sync removing 8 pages deleted in Notion.
 
 ## Working here
 
@@ -46,7 +74,7 @@ prints it and its path. For each open item, one at a time:
 
 A personal agent sharing one markdown vault and one Claude subscription:
 
-1. **A weekly digest** — Discord DM: calendar, events worth travelling to,
+1. **A weekly digest** — Discord DM: calendar, weather, events worth travelling to,
    wishlist price drops, stale Notion pages. Running **daily** as a proof of
    concept; `qm schedule install --digest-cadence weekly` switches to Sundays.
 2. **An assistant** — Discord DMs and Claude Code, sharing one conversation.
@@ -68,7 +96,7 @@ is enabled per clone with `git config core.hooksPath .githooks`.
 
 ```
 src/quartermaster/
-├── cli.py            qm doctor/init/sync/bot/web/digest/presale-check/schedule/mute/auth/mcp
+├── cli.py            qm doctor/init/sync/bot/web/digest/presale-check/reconcile/quit/schedule/mute/auth/mcp
 ├── config.py         secrets from .env, preferences from the vault's 90-System/config.toml
 ├── agent.py          Agent SDK wrapper; Profile + check_tool are the security boundary
 ├── db.py             state.db — machine state only, rebuildable
@@ -77,15 +105,19 @@ src/quartermaster/
 ├── digest.py         digest + presale orchestration;  stale.py stale-page heuristic
 ├── notion_writes.py  proposed Notion edits, applied after a Confirm in Discord
 ├── claude_tidy.py    weekly: propose a Claude page with the stale parts removed
+├── reconcile.py      daily: dedupe/tidy facts + lessons, write and DM conflicts
+├── lessons.py        facts/lessons.md: corrections, read into every owner turn and digest
+├── procs.py          `qm quit`: find and kill every Quartermaster process tree
 ├── schedule.py       Windows Task Scheduler wiring (schtasks.exe)
 ├── discord_ops.py    OpsPlan, permissions, hierarchy, matching (pure, well-tested)
 ├── integrations/     google, microsoft, spotify (OAuth; shared accounts.py),
 │                     notion (REST), claude_page (scoped writes), ticketmaster,
-│                     prices, lastfm
+│                     prices, lastfm, weather (Open-Meteo)
 ├── servers/          MCP servers over stdio (`qm mcp <name>`); shared helpers in __init__
 ├── dev_queue.py      the owner's queue of changes to this code (worked in Claude Code)
 └── surfaces/         discord_bot (routing, streaming, stop/start-fresh), moderation
-                      (preview/confirm/execute), digest_send (one-shot DM), web (qm web)
+                      (preview/confirm/execute), digest_send (one-shot DM), web (qm web),
+                      brain (the /brain graph of the vault)
 vault-template/       copied into a new vault by `qm init`
 ```
 
@@ -93,19 +125,34 @@ vault-template/       copied into a new vault by `qm init`
 
 ```bash
 ./.venv/Scripts/qm.exe doctor              # first thing when anything misbehaves
-./.venv/Scripts/qm.exe bot                 # run the bot (stop the old one first!)
+./.venv/Scripts/qm.exe quit                # stop everything (bot, web, running jobs); alias `stop`
+./.venv/Scripts/qm.exe bot                 # run the bot (quit the old one first!)
+./.venv/Scripts/qm.exe reconcile --dry-run # what the daily knowledge check would change and ask
 ./.venv/Scripts/qm.exe digest --dry-run    # preview the digest; also presale-check --dry-run
 ./.venv/Scripts/qm.exe schedule install --digest-cadence daily   # or weekly
 ./.venv/Scripts/python.exe -m pytest tests/ -q
 ```
 
-**Stop the bot before restarting it** (`Get-Process qm | Stop-Process -Force`):
-there's no service wrapper yet, and two connected instances double-reply.
+**Stop the bot before restarting it** (`qm quit`): there's no service wrapper
+yet, and two connected instances double-reply. `procs.ours` matches qm.exe and
+python running `qm.exe`/`quartermaster.cli` only: matching "quartermaster"
+anywhere once killed VS Code's language servers (they run on this venv).
 
-**Scheduled tasks** (logged-in only): Notion sync 07:00 daily, presale check
-08:00 daily, Claude page tidy Sundays 09:00, digest at `digest.hour` daily or weekly. Re-run `qm schedule
+**Scheduled tasks** (logged-in only): Notion sync 07:00 daily, reconcile 07:30
+daily, presale check 08:00 daily, Claude page tidy Sundays 09:00, digest at
+`digest.hour` daily or weekly. Re-run `qm schedule
 install` after changing `schedule.py` — the sync task only exists once it has
-been re-installed.
+been re-installed (it was first registered 2026-09-22 and had never fired, which
+is why pages deleted in Notion lingered).
+
+**The Notion sync prunes by what's on disk, not only what `state.db` tracks.**
+After each run, any `notion/**/*.md` that isn't a live page's file is removed
+(the mirror's root README excepted), so a rebuilt `state.db` can't leave orphans.
+Brake: if search returned nothing or more than half the mirror would go
+(`MAX_REMOVE_SHARE`), nothing is removed and the summary says HELD BACK;
+`qm sync --force` overrides. A page whose path changed (a parent renamed) counts
+as changed and is re-fetched to its new path. The owner agent can run it on
+request via the `qm` server's `sync_notion` tool.
 
 **Logging.** `cli.main` configures it once for every command: console (stderr)
 plus `%LOCALAPPDATA%\quartermaster\Logs\quartermaster.log` (10MB x5). Every agent
@@ -138,7 +185,8 @@ Containment is enforced three ways, because each alone has leaked:
    because the CLI also loads the account's **claude.ai connectors** (Gmail send,
    Drive share, Notion edit) into every profile.
 3. **`check_tool`**, a `PreToolUse` hook, re-checks the allow-list and confines
-   Read/Write/Edit/Glob/Grep to `profile.cwd`. Writes to `.claude/`, `.mcp.json`
+   Read/Write/Edit/Glob/Grep to `profile.cwd`, patterns included (an absolute
+   `C:/Users/**` glob once searched the whole home directory). Writes to `.claude/`, `.mcp.json`
    and `.git/` are refused even inside the vault — each is code execution on a
    later run. Live-verified 2026-09-22.
 
@@ -241,9 +289,30 @@ me about Tool" silences both the digest line and the presale ping. There is no
 bot status (from `bot.heartbeat`, written every 30s by the bot next to the log),
 scheduled jobs (`schedule.task_info`), recent turns parsed from the log, the
 newest shared-session transcript (labelled discord vs terminal by its
-`entrypoint`), a polling log tail, digests, mutes, and `docs/GUIDE.md`. Binds
+`entrypoint`), a polling log tail, digests, mutes, and `docs/GUIDE.md`.
+`/architecture` serves `docs/architecture.html` as-is: a standalone one-page
+visual of the system (no personal data, the repo is public), also linked from
+the README. Update it when the architecture changes.
+`/brain` (`surfaces/brain.py`) draws the vault's knowledge as a graph: `notion/`
+and `facts/` only (`KNOWLEDGE_DIRS`), no READMEs, digests, inbox or system
+files - the owner wants what's known, not artifacts. Edges come only from
+links, folders and title mentions (a title named in >15% of notes is skipped as
+noise), never from a model; notes the log shows the agent reading or writing
+light up. A hand-rolled canvas force layout, no JS library, so it works offline. Binds
 127.0.0.1; any other host requires `QM_WEB_TOKEN` (cookie after `/?token=`),
 because the log and transcripts hold DMs and email snippets.
+
+**`/settings` is the one place it writes.** The owner wants every configuration
+visible and editable without opening the vault: preferences in force (defaults
+merged with `config.toml`, read fresh, each marked yours/default), `.env` keys
+as set/not set (never values, never editable), and in-place editors for
+`config.toml`, `CLAUDE.md`, `muted.md`, `dev-queue.md` and `facts/*.md` (also
+from the brain panel). `web.EDITABLE` is the whole writable set; the Notion
+mirror is not in it (the next sync would overwrite it). A save is refused if the
+file's hash changed since it was loaded (the agent may have written), TOML must
+parse, writes are atomic, and each is logged. Guards: `TrustedHostMiddleware`
+(DNS rebinding), a per-run CSRF token the page sends as `X-QM-CSRF`, and the
+token gate above.
 
 ## Session sharing
 
@@ -262,7 +331,10 @@ without `continue_conversation`, which makes a new newest session.
 
 ## The digest (Phase 4)
 
-`digest.build_payload` runs independent collectors — calendar (Google), events
+`digest.build_payload` runs independent collectors — calendar (Google), weather
+(Open-Meteo, no key: 7 days at `home`, each day's `rough` reasons decided in
+code; the model always prints the week and adds ⚠️ only where a rough day
+meets a plan), events
 (Ticketmaster, bucketed into distance bands by true haversine distance, capped at
 `MAX_EVENTS_PER_BAND`=60 because an uncapped run once built a 1.15MB, $2.23
 prompt), wishlist price drops, stale Notion pages — filters everything through

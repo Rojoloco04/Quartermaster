@@ -1,7 +1,7 @@
 """The one place in Notion the agent may write: the owner's "Claude" page.
 
-Everything else in Notion is the owner's, and changes there are proposals in
-90-System/pending.md. The page id comes from ``notion.claude_page_id`` in
+Everything else in Notion is the owner's, and changes there are proposals
+(``notion_writes``) applied only after a Confirm in Discord. The page id comes from ``notion.claude_page_id`` in
 config.toml, and every write is checked here to be that page or a page
 directly beneath it. The check is in code, not in a prompt: the tool cannot be
 talked into writing anywhere else.

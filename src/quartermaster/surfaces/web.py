@@ -1,28 +1,38 @@
 """``qm web``: a local dashboard for seeing what Quartermaster is doing.
 
 Bot status, scheduled jobs, recent agent turns, the live shared conversation
-(Discord and terminal), a tailing log, digests, mutes and the user guide. Read
-only: nothing here changes state.
+(Discord and terminal), a tailing log, digests, mutes, the vault drawn as a graph
+(/brain), the user guide, and /settings: every preference, the agent's
+instructions, facts, lessons, mutes and the dev queue, viewable and editable.
+Those edits are the only thing here that changes state.
 
 The log and transcripts hold email snippets and DMs, so it binds to localhost.
 Binding anywhere else (a Tailscale address, say) requires ``QM_WEB_TOKEN``;
-open ``/?token=...`` once and a cookie carries it after that.
+open ``/?token=...`` once and a cookie carries it after that. Requests must
+name an expected Host (a DNS-rebinding page can't read or write through the
+owner's browser), and a save must carry the per-run CSRF token from the page.
 """
 
 from __future__ import annotations
 
+import hashlib
 import html
 import json
+import logging
 import os
 import re
 import secrets
 import time
+import tomllib
 from datetime import datetime
 from pathlib import Path
 
 from .. import mutes, schedule
 from ..agent import transcript_dir
-from ..config import REPO_ROOT, Settings
+from ..config import DEFAULTS, REPO_ROOT, Settings, _deep_merge
+from . import brain
+
+log = logging.getLogger(__name__)
 
 HEARTBEAT_STALE = 90  # seconds; the bot writes one every 30
 TAIL_BYTES = 2_000_000  # how much of the log the turn table reads
@@ -108,10 +118,104 @@ def read_log_from(path: Path, pos: int) -> tuple[int, str]:
     return pos + len(data), data.decode("utf-8", "replace")
 
 
-def markdown_to_html(text: str) -> str:
-    """Enough markdown for the guide: headings, bullets, code blocks, `code`, **bold**."""
+# --- Editing (the only writes qm web makes) ------------------------------------
+#
+# Everything that configures Quartermaster or holds what it knows, so the owner
+# never has to open the vault to check or change it. Not the Notion mirror (the
+# next sync overwrites it; edit in Notion), and not digests or the inbox.
+
+EDITABLE = ("CLAUDE.md", "90-System/config.toml", "90-System/muted.md", "90-System/dev-queue.md",
+            "90-System/conflicts.md")
+_FACT = re.compile(r"facts/[\w.-]+\.md")
+
+
+class EditRefused(ValueError):
+    pass
+
+
+def editable_path(vault: Path, rel: str) -> Path | None:
+    rel = rel.replace("\\", "/")
+    if rel not in EDITABLE and not _FACT.fullmatch(rel):
+        return None
+    path = (vault / rel).resolve()
+    return path if vault.resolve() in path.parents else None
+
+
+def file_hash(path: Path) -> str:
+    """What the editor loaded, so a save can tell if the agent wrote in between."""
+    return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else ""
+
+
+def save_file(vault: Path, rel: str, text: str, loaded_hash: str) -> str:
+    """Write an editable file; returns its new hash. Refuses a path outside
+    ``EDITABLE``, a file changed since it was loaded, and TOML that won't parse."""
+    path = editable_path(vault, rel)
+    if path is None:
+        raise EditRefused(f"{rel} isn't editable here.")
+    if file_hash(path) != loaded_hash:
+        raise EditRefused("It changed since you opened it (the agent may have written to it). Reload and redo your edit.")
+    text = text.replace("\r\n", "\n").rstrip("\n") + "\n"
+    if path.suffix == ".toml":
+        try:
+            tomllib.loads(text)
+        except tomllib.TOMLDecodeError as exc:
+            raise EditRefused(f"Not saved, the TOML doesn't parse: {exc}") from None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+    log.info("web edit: %s (%d chars)", rel, len(text))
+    return file_hash(path)
+
+
+def effective_prefs(vault: Path) -> list[tuple[str, str, bool]]:
+    """(dotted key, value, set in config.toml) for every preference in force.
+    Read fresh, so it shows what the next scheduled run will use."""
+    path = vault / "90-System" / "config.toml"
+    try:
+        yours = tomllib.loads(path.read_text("utf-8")) if path.exists() else {}
+    except tomllib.TOMLDecodeError:
+        yours = {}
+    merged = _deep_merge(DEFAULTS, yours)
+    rows: list[tuple[str, str, bool]] = []
+
+    def walk(node: dict, mine: object, prefix: str) -> None:
+        for key, value in node.items():
+            here = mine.get(key) if isinstance(mine, dict) else None
+            if isinstance(value, dict):
+                walk(value, here, f"{prefix}{key}.")
+            else:
+                rows.append((prefix + key, json.dumps(value, ensure_ascii=False), here is not None))
+
+    walk(merged, yours, "")
+    return rows
+
+
+def secret_status() -> list[tuple[str, bool]]:
+    """(name, set?) for every key in .env.example. Never the values."""
+    example = REPO_ROOT / ".env.example"
+    names = re.findall(r"^([A-Z][A-Z0-9_]+)=", example.read_text("utf-8"), re.M) if example.exists() else []
+    return [(name, bool(os.getenv(name))) for name in dict.fromkeys(names)]
+
+
+_LINK = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
+
+
+def _link(m: re.Match, resolve) -> str:
+    text, url = m[1], m[2]
+    if re.match(r"https?://", url):
+        return f'<a href="{url}" target="_blank" rel="noopener noreferrer">{text}</a>'
+    if resolve and (note := resolve(html.unescape(url))):
+        return f'<a href="#" data-note="{html.escape(note)}">{text}</a>'
+    return text
+
+
+def markdown_to_html(text: str, resolve=None) -> str:
+    """Enough markdown for the guide and notes: headings, bullets, code blocks,
+    `code`, **bold** and links. http(s) links open in a new tab; others become
+    ``data-note`` links when ``resolve`` maps them to a note id, else plain text."""
     out: list[str] = []
-    in_code = in_list = False
+    in_code = in_list = in_para = False
     for raw in text.splitlines():
         if raw.startswith("```"):
             out.append("</pre>" if in_code else "<pre>")
@@ -123,6 +227,14 @@ def markdown_to_html(text: str) -> str:
         line = html.escape(raw)
         line = re.sub(r"`([^`]+)`", r"<code>\1</code>", line)
         line = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", line)
+        line = _LINK.sub(lambda m: _link(m, resolve), line)
+        text_line = line.strip() and not re.match(r"#{1,4} |- ", line.strip())
+        if text_line and (in_para or in_list and raw[:1] in (" ", "\t")):
+            # A hard-wrapped line continues the bullet or paragraph above it.
+            end = "</li>" if out[-1].endswith("</li>") else "</p>"
+            out[-1] = out[-1][: -len(end)] + " " + line.strip() + end
+            continue
+        in_para = False
         if in_list and not line.startswith("- "):
             out.append("</ul>")
             in_list = False
@@ -135,6 +247,7 @@ def markdown_to_html(text: str) -> str:
             out.append(f"<li>{line[2:]}</li>")
         elif line.strip():
             out.append(f"<p>{line}</p>")
+            in_para = True
     if in_list:
         out.append("</ul>")
     return "\n".join(out)
@@ -185,11 +298,11 @@ def _e(value: object) -> str:
     return html.escape(str(value))
 
 
-def page(title: str, body: str, script: str = "") -> str:
+def page(title: str, body: str, script: str = "", css: str = "", csrf: str = "") -> str:
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>{_e(title)}</title>
-<style>{CSS}</style></head><body><header><h1>Quartermaster</h1><nav>
-<a href="/">Dashboard</a><a href="/guide">Guide</a></nav></header><main>{body}</main>
+<meta name="qm-csrf" content="{_e(csrf)}"><style>{CSS}{css}</style></head><body><header><h1>Quartermaster</h1><nav>
+<a href="/">Dashboard</a><a href="/brain">Brain</a><a href="/settings">Settings</a><a href="/architecture">Architecture</a><a href="/guide">Guide</a></nav></header><main>{body}</main>
 <script>{script}</script></body></html>"""
 
 
@@ -237,14 +350,149 @@ def dashboard(settings: Settings) -> str:
 </div>""", LOG_JS)
 
 
+EDIT_CSS = """
+.file { border-top:1px solid var(--line); padding:10px 0 }
+.file:first-of-type { border-top:0 }
+.filehead { display:flex; gap:8px; align-items:baseline; flex-wrap:wrap }
+.filehead button, .editor button { font:inherit; font-size:12px; padding:3px 10px; border-radius:5px; cursor:pointer;
+  border:1px solid var(--line); background:var(--code); color:var(--fg) }
+.editor button[data-save] { background:var(--accent); border-color:var(--accent); color:#fff }
+.editor textarea { width:100%; min-height:260px; margin:6px 0; padding:8px; border:1px solid var(--line); border-radius:6px;
+  background:var(--bg); color:var(--fg); font:12.5px/1.5 ui-monospace, Consolas, monospace; resize:vertical }
+.view { overflow-wrap:anywhere } .view h2 { font-size:14px; text-transform:none; letter-spacing:0; color:var(--fg) }
+.msg { font-size:12px } .note { color:var(--muted); font-size:12.5px; margin:0 0 8px }
+td.v { font:12px ui-monospace, Consolas, monospace; overflow-wrap:anywhere } .tag { font-size:11px; color:var(--muted) }
+.tag.yours { color:var(--accent) }
+"""
+
+# Shared by /settings and the brain's note panel: any .file block becomes
+# editable in place. The CSRF header is what a cross-site form can't send.
+EDIT_JS = r"""
+const QM_CSRF = document.querySelector('meta[name=qm-csrf]').content;
+function qmClose(box) {
+  box.querySelector('.editor').hidden = true; box.querySelector('.view').hidden = false;
+  box.querySelector('[data-edit]').hidden = false;
+}
+async function qmSave(box) {
+  const ta = box.querySelector('textarea'), msg = box.querySelector('.msg');
+  msg.className = 'msg muted'; msg.textContent = 'Saving…';
+  let r = null, d = {};
+  try {
+    r = await fetch('/api/file', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-QM-CSRF': QM_CSRF},
+      body: JSON.stringify({path: box.dataset.path, text: ta.value, hash: box.dataset.hash})});
+    d = await r.json();
+  } catch (e) { d = {error: 'Save failed: ' + e}; }
+  if (!r || !r.ok) { msg.className = 'msg bad'; msg.textContent = d.error || 'Save failed.'; return; }
+  box.dataset.hash = d.hash; ta.dataset.orig = ta.value; box.querySelector('.view').innerHTML = d.html;
+  qmClose(box); msg.className = 'msg ok'; msg.textContent = 'Saved.';
+  setTimeout(() => { if (msg.textContent === 'Saved.') msg.textContent = ''; }, 2500);
+}
+document.addEventListener('click', ev => {
+  const b = ev.target.closest('[data-edit],[data-save],[data-cancel]');
+  if (!b) return;
+  const box = b.closest('.file'), ta = box.querySelector('textarea');
+  if (b.hasAttribute('data-edit')) {
+    box.querySelector('.editor').hidden = false; box.querySelector('.view').hidden = true; b.hidden = true;
+    box.querySelector('.msg').textContent = ''; ta.dataset.orig = ta.value; ta.focus();
+  } else if (b.hasAttribute('data-cancel')) { ta.value = ta.dataset.orig; qmClose(box); }
+  else qmSave(box);
+});
+document.addEventListener('keydown', ev => {
+  if ((ev.ctrlKey || ev.metaKey) && ev.key === 's' && ev.target.matches('.file textarea')) {
+    ev.preventDefault(); qmSave(ev.target.closest('.file'));
+  }
+});
+"""
+
+
+def render_file(rel: str, text: str) -> str:
+    """How an editable file reads when it isn't being edited. The title is in the
+    block's header, so a leading ``# Heading`` isn't repeated; TOML sits behind a
+    toggle because the preferences table above already shows what's in force."""
+    if rel.endswith(".toml"):
+        return f"<details><summary class='muted'>Show the file</summary><pre>{_e(text)}</pre></details>"
+    return markdown_to_html(re.sub(r"\A\s*# .*\n?", "", text)) or "<p class='muted'>Empty.</p>"
+
+
+def file_block(vault: Path, rel: str, title: str, note: str = "") -> str:
+    path = editable_path(vault, rel)
+    text = path.read_text("utf-8") if path and path.exists() else ""
+    view = render_file(rel, text) if text.strip() else "<p class='muted'>Nothing here yet.</p>"
+    return (
+        f"<div class='file' data-path='{_e(rel)}' data-hash='{file_hash(path) if path else ''}'>"
+        f"<div class='filehead'><strong>{_e(title)}</strong> <span class='muted'>{_e(rel)}</span>"
+        f"<button type='button' data-edit>Edit</button><span class='msg'></span></div>"
+        + (f"<p class='note'>{note}</p>" if note else "")
+        + f"<div class='view'>{view}</div>"
+        f"<div class='editor' hidden><textarea spellcheck='false'>{_e(text)}</textarea>"
+        f"<button type='button' data-save>Save</button> <button type='button' data-cancel>Cancel</button>"
+        f" <span class='muted'>Ctrl+S saves</span></div></div>"
+    )
+
+
+FACT_NOTES = {
+    "facts/lessons.md": "Corrections you've given. The agent records one whenever you tell it it got something "
+                        "wrong, and every reply and digest follows them.",
+    "facts/interests.md": "Filters the digest's events and the presale pings. A line you write outranks anything inferred.",
+}
+
+
+def _fact_title(path: Path) -> str:
+    if not path.exists():
+        return "Lessons"
+    m = re.search(r"^# (.+)$", path.read_text("utf-8"), re.M)
+    return m[1].strip() if m else path.stem
+
+
+def settings_page(settings: Settings, csrf: str) -> str:
+    vault = settings.vault
+    prefs = "".join(
+        f"<tr><td><code>{_e(key)}</code></td><td class='v'>{_e(value)}</td>"
+        f"<td><span class='tag{' yours' if yours else ''}'>{'yours' if yours else 'default'}</span></td></tr>"
+        for key, value, yours in effective_prefs(vault)
+    )
+    env = "".join(
+        f"<tr><td><code>{_e(name)}</code></td><td class='{'ok' if is_set else 'muted'}'>{'set' if is_set else 'not set'}</td></tr>"
+        for name, is_set in secret_status()
+    )
+    facts = {p.relative_to(vault).as_posix() for p in settings.facts_dir.glob("*.md")} if settings.facts_dir.exists() else set()
+    facts.add("facts/lessons.md")  # shown even before the first lesson, so it can be seeded by hand
+    order = sorted(facts, key=lambda rel: (rel != "facts/lessons.md", rel.endswith("/README.md"), rel))
+    fact_blocks = "".join(file_block(vault, rel, _fact_title(vault / rel), FACT_NOTES.get(rel, "")) for rel in order)
+    return page("Settings", f"""
+<section><h2>How changes apply</h2><p class="note" style="margin:0">Everything Quartermaster runs on is on this page.
+Instructions, facts and lessons apply from the next message. Preferences apply to scheduled jobs on their next run
+and to the bot after a restart. A save is refused if the agent changed the file since you opened it. Notion pages
+are edited in Notion: the mirror is overwritten on every sync.</p></section>
+<section><h2>Preferences in force</h2><table><tr><th>Setting</th><th>Value</th><th></th></tr>{prefs}</table>
+{file_block(vault, "90-System/config.toml", "Edit preferences", "Only what you set here overrides the defaults above. Saved only if it parses.")}</section>
+<section><h2>Conflicts</h2>{file_block(vault, "90-System/conflicts.md", "Where what it knows disagrees", "Found by the daily reconcile (<code>qm reconcile</code>). Answer in a DM and every file gets updated, or fix it yourself and delete the entry.")}</section>
+<section><h2>What it knows</h2>{fact_blocks}</section>
+<section><h2>Instructions</h2>{file_block(vault, "CLAUDE.md", "How the agent works in your vault", "Loaded at the start of every conversation and into every digest.")}</section>
+<div class="grid2">
+<section><h2>Mutes</h2>{file_block(vault, "90-System/muted.md", "Never raise these again", "One <code>kind:key</code> per line. <code>artist/Tool</code> with no kind mutes every kind.")}</section>
+<section><h2>Dev queue</h2>{file_block(vault, "90-System/dev-queue.md", "Changes to Quartermaster itself", "Worked in Claude Code. Tick an item with <code>[x]</code> to close it.")}</section>
+</div>
+<section><h2>Secrets</h2><p class="note">In the repo's <code>.env</code>. Shown as set or not, never their values, and not editable from a browser.</p>
+<table>{env}</table></section>""", EDIT_JS, EDIT_CSS, csrf)
+
+
 # --- App -----------------------------------------------------------------------
 
 
-def build_app(settings: Settings, token: str | None = None):
+LOCAL_HOSTS = ("127.0.0.1", "localhost")
+
+
+def build_app(settings: Settings, token: str | None = None, hosts: tuple[str, ...] = LOCAL_HOSTS):
     from starlette.applications import Starlette
+    from starlette.middleware import Middleware
+    from starlette.middleware.trustedhost import TrustedHostMiddleware
     from starlette.requests import Request
     from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
     from starlette.routing import Route
+
+    # Per run: pages carry it, saves must send it back as a header.
+    csrf = secrets.token_urlsafe(32)
 
     def authorised(request: Request) -> bool:
         if token is None:
@@ -282,8 +530,73 @@ def build_app(settings: Settings, token: str | None = None):
         text = path.read_text("utf-8") if path.exists() else "# Guide\n\nNot written yet."
         return HTMLResponse(page("Guide", f"<section>{markdown_to_html(text)}</section>"))
 
-    return Starlette(routes=[
+    async def architecture(request: Request):
+        # A standalone page in docs/, so it also reads fine opened from the repo.
+        path = REPO_ROOT / "docs" / "architecture.html"
+        if not path.exists():
+            return PlainTextResponse("docs/architecture.html is missing.", status_code=404)
+        return HTMLResponse(path.read_text("utf-8"))
+
+    def graph() -> dict:
+        _, log_text = read_log_from(settings.log_path, -TAIL_BYTES)
+        return brain.build(settings.vault, log_text)
+
+    async def brain_page(request: Request):
+        return HTMLResponse(page("Brain", brain.BODY, EDIT_JS + brain.JS, EDIT_CSS + brain.CSS, csrf))
+
+    async def settings_view(request: Request):
+        return HTMLResponse(settings_page(settings, csrf))
+
+    async def api_file_save(request: Request):
+        if not secrets.compare_digest(request.headers.get("x-qm-csrf", ""), csrf):
+            return JSONResponse({"error": "Missing or stale page token. Reload the page."}, status_code=403)
+        try:
+            body = await request.json()
+            rel, text = str(body["path"]), str(body["text"])
+            new_hash = save_file(settings.vault, rel, text, str(body.get("hash", "")))
+        except EditRefused as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        except (ValueError, KeyError, TypeError):
+            return JSONResponse({"error": "Malformed save."}, status_code=400)
+        saved = (settings.vault / rel).read_text("utf-8")
+        return JSONResponse({"hash": new_hash, "html": render_file(rel, saved)})
+
+    async def api_brain(request: Request):
+        return JSONResponse(graph())
+
+    async def api_brain_note(request: Request):
+        note_id = request.query_params.get("id", "")
+        path = brain.note_path(settings.vault, note_id)
+        if path is None:
+            return JSONResponse({"error": "No such note."}, status_code=404)
+        meta, body = brain.frontmatter(path.read_text("utf-8", errors="replace"))
+        root = settings.vault.resolve()
+
+        def resolve(target: str) -> str | None:
+            candidate = (path.parent / target.split("#")[0]).resolve()
+            if root not in candidate.parents:
+                return None
+            rel = candidate.relative_to(root).as_posix()
+            return rel if brain.note_path(settings.vault, rel) else None
+
+        g = graph()
+        node = next((n for n in g["nodes"] if n["id"] == note_id), {})
+        out, back = brain.neighbours(g, note_id)
+        url = meta.get("url", "")
+        editable = editable_path(settings.vault, note_id) is not None
+        body = re.sub(r"\A\s*# .*\n?", "", body)  # the panel header already shows the title
+        return JSONResponse({**node, "html": markdown_to_html(body, resolve), "out": out, "back": back,
+                             "url": url if url.startswith("https://") else "", "editable": editable,
+                             **({"raw": path.read_text("utf-8"), "hash": file_hash(path)} if editable else {})})
+
+    return Starlette(middleware=[Middleware(TrustedHostMiddleware, allowed_hosts=list(hosts))], routes=[
         Route("/", guarded(index)),
+        Route("/settings", guarded(settings_view)),
+        Route("/architecture", guarded(architecture)),
+        Route("/api/file", guarded(api_file_save), methods=["POST"]),
+        Route("/brain", guarded(brain_page)),
+        Route("/api/brain", guarded(api_brain)),
+        Route("/api/brain/note", guarded(api_brain_note)),
         Route("/api/log", guarded(api_log)),
         Route("/digest/{name}", guarded(digest)),
         Route("/guide", guarded(guide)),
@@ -296,5 +609,6 @@ def serve(settings: Settings, host: str = "127.0.0.1", port: int = 8766) -> int:
     token = os.getenv("QM_WEB_TOKEN") or None
     if host not in ("127.0.0.1", "localhost", "::1") and not token:
         raise RuntimeError(f"Refusing to serve on {host} without QM_WEB_TOKEN set: the log holds DMs and email snippets.")
-    uvicorn.run(build_app(settings, token), host=host, port=port, log_level="warning")
+    hosts = LOCAL_HOSTS if host in LOCAL_HOSTS else (*LOCAL_HOSTS, host)
+    uvicorn.run(build_app(settings, token, hosts), host=host, port=port, log_level="warning")
     return 0

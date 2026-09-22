@@ -12,6 +12,12 @@ Two things this is careful about:
   it believes it has read, so truncation goes in the frontmatter.
 - **Deletions are real.** A page unshared or trashed in Notion is removed from
   the mirror, or the agent keeps answering from content that no longer exists.
+  After each run, any mirror file that isn't a live page's goes, whether or not
+  ``state.db`` remembers writing it (it's rebuildable, so it can forget). One
+  brake: if Notion returned nothing, or more than ``MAX_REMOVE_SHARE`` of the
+  mirror would go (an integration unshared from a top-level page looks exactly
+  like mass deletion), nothing is removed and the summary says so;
+  ``--force`` removes anyway.
 """
 
 from __future__ import annotations
@@ -43,6 +49,8 @@ _RESERVED = {
 
 DQUOTE = '"'
 SQUOTE = "'"
+
+MAX_REMOVE_SHARE = 0.5
 
 
 def _has_letters_or_digits(text: str) -> bool:
@@ -92,6 +100,7 @@ class SyncStats:
     written: int = 0
     unchanged: int = 0
     removed: int = 0
+    held_back: int = 0  # removals the brake stopped
     truncated: list[str] = field(default_factory=list)
     empty: list[str] = field(default_factory=list)
     failed: list[tuple[str, str]] = field(default_factory=list)
@@ -109,6 +118,9 @@ class SyncStats:
             bits.append(f"{len(self.truncated)} TRUNCATED")
         if self.failed:
             bits.append(f"{len(self.failed)} FAILED")
+        if self.held_back:
+            bits.append(f"{self.held_back} REMOVALS HELD BACK (too many at once; check Notion sharing, "
+                        "then `qm sync --force` if the pages really are gone)")
         return ", ".join(bits)
 
 
@@ -240,10 +252,13 @@ def sync(settings: Settings, force: bool = False) -> SyncStats:
                 (obj_id,),
             ).fetchone()
 
+            # Its own edit time is not enough: renaming a parent moves the path
+            # without touching the child, which then sat at the old path.
             unchanged = (
                 row is not None
                 and row["last_edited_at"] == last_edited
-                and Path(row["vault_path"]).exists()
+                and Path(row["vault_path"]) == path
+                and path.exists()
             )
             if unchanged and not force:
                 stats.unchanged += 1
@@ -303,25 +318,35 @@ def sync(settings: Settings, force: bool = False) -> SyncStats:
                 ),
             )
 
-        stats.removed = _prune(conn, live_ids)
+        stats.removed, stats.held_back = _prune(conn, notion_dir, live_ids, paths, force=force)
         _prune_empty_dirs(notion_dir)
 
     return stats
 
 
-def _prune(conn: sqlite3.Connection, live_ids: set[str]) -> int:
-    """Delete mirrored files for pages that are gone from Notion."""
-    removed = 0
-    rows = conn.execute(
-        "SELECT page_id, vault_path FROM notion_pages WHERE archived = 0"
-    ).fetchall()
-    for row in rows:
-        if row["page_id"] in live_ids:
-            continue
-        Path(row["vault_path"]).unlink(missing_ok=True)
-        conn.execute("UPDATE notion_pages SET archived = 1 WHERE page_id = ?", (row["page_id"],))
-        removed += 1
-    return removed
+def _key(path: Path) -> str:
+    return str(path.resolve()).lower()  # NTFS is case-insensitive
+
+
+def _prune(
+    conn: sqlite3.Connection, notion_dir: Path, live_ids: set[str], paths: dict[str, Path], *, force: bool
+) -> tuple[int, int]:
+    """Remove every mirror file that isn't a live page's. Returns (removed, held back)."""
+    rows = conn.execute("SELECT page_id, vault_path FROM notion_pages WHERE archived = 0").fetchall()
+    # A live page's file is where it was assigned, or, if this run couldn't
+    # fetch it, wherever it was last written.
+    keep = {_key(p) for pid, p in paths.items() if pid in live_ids}
+    keep |= {_key(Path(r["vault_path"])) for r in rows if r["page_id"] in live_ids}
+    mirror = [p for p in notion_dir.rglob("*.md") if not (p.parent == notion_dir and p.name.lower() == "readme.md")]
+    doomed = [p for p in mirror if _key(p) not in keep]
+    gone_rows = [r["page_id"] for r in rows if r["page_id"] not in live_ids]
+
+    if not force and doomed and (not live_ids or len(doomed) > len(mirror) * MAX_REMOVE_SHARE):
+        return 0, len(doomed)
+    for path in doomed:
+        path.unlink(missing_ok=True)
+    conn.executemany("UPDATE notion_pages SET archived = 1 WHERE page_id = ?", [(pid,) for pid in gone_rows])
+    return len(doomed), 0
 
 
 def _prune_empty_dirs(root: Path) -> None:

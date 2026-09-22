@@ -247,7 +247,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
     print("Pulling Notion...")
     stats = sync(settings, force=args.force)
     print(stats.summary())
-    log.info("notion sync: %s", stats.summary())
+    (log.warning if stats.held_back else log.info)("notion sync: %s", stats.summary())
     for title, err in stats.failed:
         log.warning("notion sync failed for %s: %s", title, err)
 
@@ -314,6 +314,27 @@ def cmd_tidy(args: argparse.Namespace) -> int:
         log.exception("claude page tidy failed")
         print(f"Tidy failed: {exc}")
         return 1
+    return 0
+
+
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    from . import reconcile
+
+    settings = load_settings()
+    try:
+        print(reconcile.run_reconcile(settings, dry_run=args.dry_run))
+    except Exception as exc:  # noqa: BLE001 - unattended: report, don't vanish
+        log.exception("reconcile failed")
+        print(f"Reconcile failed: {exc}")
+        return 1
+    return 0
+
+
+def cmd_quit(args: argparse.Namespace) -> int:
+    from . import procs
+
+    stopped = procs.quit_all()
+    print("Stopped: " + ", ".join(stopped) if stopped else "Nothing was running.")
     return 0
 
 
@@ -423,7 +444,8 @@ def main(argv: list[str] | None = None) -> int:
     p_init.set_defaults(func=cmd_init)
 
     p_sync = sub.add_parser("sync", help="pull Notion into the vault")
-    p_sync.add_argument("--force", action="store_true", help="refetch every page, ignoring cache")
+    p_sync.add_argument("--force", action="store_true",
+                        help="refetch every page, and remove orphans even past the mass-deletion brake")
     p_sync.set_defaults(func=cmd_sync)
 
     sub.add_parser("bot", help="run the Discord bot").set_defaults(func=cmd_bot)
@@ -448,6 +470,14 @@ def main(argv: list[str] | None = None) -> int:
     p_tidy = sub.add_parser("tidy", help="propose a cleaned-up Claude page (you confirm in Discord)")
     p_tidy.add_argument("--dry-run", action="store_true", help="print the rewrite; propose nothing")
     p_tidy.set_defaults(func=cmd_tidy)
+
+    p_reconcile = sub.add_parser("reconcile", help="dedupe and tidy facts/lessons; DM any conflicts found")
+    p_reconcile.add_argument("--dry-run", action="store_true", help="print what it would change; write nothing")
+    p_reconcile.set_defaults(func=cmd_reconcile)
+
+    sub.add_parser("quit", aliases=["stop"], help="stop every running Quartermaster process (bot, web, jobs)").set_defaults(
+        func=cmd_quit
+    )
 
     p_queue = sub.add_parser("queue", help="list (or add to) the dev queue of code changes")
     p_queue.add_argument("text", nargs="*", help="what to change; omit to list the queue")

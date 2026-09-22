@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quartermaster Architecture</title>
+<meta name="description" content="How Quartermaster fits together: surfaces, agent profiles, the security boundary, memory and the daily schedule.">
+<style>
+:root { --bg:#fbfbfa; --fg:#1d1d1b; --muted:#6b6b66; --line:#e3e3df; --card:#fff; --code:#f2f2ef;
+  --accent:#3a5ccc; --ok:#1f7a4d; --bad:#b3261e;
+  --c-surface:#3a5ccc; --c-core:#7a4fc4; --c-model:#b0661a; --c-store:#1f7a4d; --c-guard:#b3261e;
+  --t-surface:#eef1fb; --t-core:#f3eefb; --t-model:#fbf2e8; --t-store:#eaf5ef; --t-guard:#fbecea; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg:#161615; --fg:#ececea; --muted:#9a9a94; --line:#2c2c2a; --card:#1e1e1c; --code:#262624; --accent:#8fa6ff;
+  --ok:#5cc28f; --bad:#f08a80;
+  --c-surface:#8fa6ff; --c-core:#b99cf0; --c-model:#e9a55c; --c-store:#5cc28f; --c-guard:#f08a80;
+  --t-surface:#1f2436; --t-core:#261f33; --t-model:#2e2519; --t-store:#1a2a22; --t-guard:#301d1b; } }
+:root[data-theme="dark"] { --bg:#161615; --fg:#ececea; --muted:#9a9a94; --line:#2c2c2a; --card:#1e1e1c; --code:#262624;
+  --accent:#8fa6ff; --ok:#5cc28f; --bad:#f08a80;
+  --c-surface:#8fa6ff; --c-core:#b99cf0; --c-model:#e9a55c; --c-store:#5cc28f; --c-guard:#f08a80;
+  --t-surface:#1f2436; --t-core:#261f33; --t-model:#2e2519; --t-store:#1a2a22; --t-guard:#301d1b; }
+* { box-sizing:border-box }
+body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif }
+a { color:var(--accent) }
+header.top { display:flex; flex-wrap:wrap; gap:6px 16px; align-items:baseline; padding:14px 16px; border-bottom:1px solid var(--line) }
+header.top h1 { font-size:16px; margin:0 } header.top nav a { margin-right:12px; font-size:14px }
+main { max-width:1080px; margin:0 auto; padding:28px 16px 64px; overflow-wrap:anywhere }
+.lede h2 { font-size:28px; line-height:1.2; margin:0 0 8px; letter-spacing:-.01em }
+.lede p { color:var(--muted); max-width:720px; margin:0 }
+section { margin-top:44px }
+section > h3 { font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); margin:0 0 4px }
+section > p.sub { margin:0 0 16px; max-width:760px }
+code { background:var(--code); border-radius:4px; padding:1px 5px; font:12.5px ui-monospace, Consolas, monospace }
+
+/* lanes: the system at a glance */
+.lanes { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:28px; position:relative }
+.lane h4 { margin:0 0 8px; font-size:12px; text-transform:uppercase; letter-spacing:.06em }
+.lane { position:relative }
+.lane:not(:last-child)::after { content:"→"; position:absolute; right:-22px; top:46%; color:var(--muted); font-size:20px }
+.box { background:var(--card); border:1px solid var(--line); border-left:4px solid var(--k); border-radius:8px;
+  padding:9px 11px; margin-bottom:8px }
+.box b { display:block; font-size:14px } .box span { display:block; font-size:12.5px; color:var(--muted); line-height:1.4 }
+.surface { --k:var(--c-surface) } .core { --k:var(--c-core) } .model { --k:var(--c-model) } .store { --k:var(--c-store) } .guard { --k:var(--c-guard) }
+.lane.surface h4 { color:var(--c-surface) } .lane.core h4 { color:var(--c-core) }
+.lane.model h4 { color:var(--c-model) } .lane.store h4 { color:var(--c-store) }
+
+/* numbered flow */
+.flow { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; counter-reset:step }
+.step { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px 10px 42px; position:relative;
+  counter-increment:step; font-size:13.5px }
+.step::before { content:counter(step); position:absolute; left:10px; top:10px; width:22px; height:22px; border-radius:50%;
+  background:var(--k, var(--accent)); color:var(--bg); font-weight:700; font-size:12px; display:grid; place-items:center }
+.step b { display:block; font-size:14px; margin-bottom:2px }
+
+/* guard layers */
+.layers { display:grid; gap:8px }
+.layer { display:grid; grid-template-columns:34px 1fr; gap:12px; align-items:start; background:var(--t-guard);
+  border:1px solid var(--line); border-radius:8px; padding:12px 14px }
+.layer .n { width:30px; height:30px; border-radius:50%; background:var(--c-guard); color:var(--bg); font-weight:700;
+  display:grid; place-items:center }
+.layer > div { min-width:0 } .layer b { display:block } .layer span { font-size:13.5px; color:var(--muted) }
+.pipe { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-top:14px }
+.pipe .chip { background:var(--card); border:1px solid var(--line); border-radius:999px; padding:5px 12px; font-size:13px }
+.pipe .chip.model { border-color:var(--c-model); color:var(--c-model) } .pipe .chip.code { border-color:var(--c-core); color:var(--c-core) }
+.pipe .arrow { color:var(--muted) }
+
+/* tables */
+.tablewrap { overflow-x:auto; border:1px solid var(--line); border-radius:8px; background:var(--card) }
+table { border-collapse:collapse; width:100%; font-size:13.5px }
+th, td { text-align:left; padding:8px 12px; border-bottom:1px solid var(--line); vertical-align:top }
+th { color:var(--muted); font-weight:500; font-size:12px; text-transform:uppercase; letter-spacing:.05em }
+tr:last-child td { border-bottom:0 }
+td.y { color:var(--ok) } td.n { color:var(--muted) } td.off { color:var(--bad); font-weight:600 }
+
+/* memory loop */
+.loop { display:grid; grid-template-columns:1fr 1fr; gap:14px }
+.card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px }
+.card h5 { margin:0 0 8px; font-size:15px }
+.card ol, .card ul { margin:0; padding-left:20px; font-size:13.5px } .card li { margin:3px 0 }
+
+/* timeline */
+.timeline { position:relative; margin:18px 0 6px; height:118px; border-radius:10px; background:var(--card); border:1px solid var(--line) }
+.axis { position:absolute; left:24px; right:24px; top:62px; height:2px; background:var(--line) }
+.tick { position:absolute; top:70px; font-size:11px; color:var(--muted); transform:translateX(-50%) }
+.ev { position:absolute; top:12px; transform:translateX(-50%); text-align:center; width:86px; font-size:12px; line-height:1.3 }
+.ev::after { content:""; display:block; width:12px; height:12px; border-radius:50%; background:var(--k); margin:6px auto 0;
+  box-shadow:0 0 0 3px var(--card) }
+.ev b { display:block; font-size:12.5px } .ev.low { top:84px } .ev.low::after { display:none }
+.ev.low::before { content:""; display:block; width:12px; height:12px; border-radius:50%; background:var(--k); margin:-28px auto 6px }
+
+.mods { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:8px }
+.mod { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:9px 12px; font-size:13px }
+.mod code { font-weight:600 } .mod span { color:var(--muted); display:block; margin-top:2px }
+footer { margin-top:48px; color:var(--muted); font-size:13px }
+
+@media (max-width: 820px) {
+  .lanes { grid-template-columns:1fr; gap:22px }
+  .lane:not(:last-child)::after { content:"↓"; right:auto; left:50%; top:auto; bottom:-24px }
+  .loop, .flow { grid-template-columns:1fr }
+  .timeline { height:auto; padding:10px 12px }
+  .axis, .tick { display:none }
+  .ev, .ev.low { position:static; transform:none; width:auto; text-align:left; margin:6px 0; display:flex; gap:8px; align-items:baseline }
+  .ev::after, .ev.low::before { display:none } .ev b { display:inline }
+  .lede h2 { font-size:23px }
+}
+</style>
+</head>
+<body>
+<header class="top"><h1>Quartermaster</h1><nav>
+<a href="/">Dashboard</a><a href="/brain">Brain</a><a href="/settings">Settings</a><a href="/architecture">Architecture</a><a href="/guide">Guide</a></nav></header>
+<main>
+
+<div class="lede">
+  <h2>How Quartermaster fits together</h2>
+  <p>A personal agent running on one Windows machine. It shares one markdown vault and one Claude subscription
+  across Discord, the terminal, a local dashboard and a few scheduled jobs. The model phrases and decides; plain
+  Python fetches, checks and executes.</p>
+</div>
+
+<section>
+  <h3>The system at a glance</h3>
+  <p class="sub">Every request enters through a surface and becomes an agent turn under a <em>profile</em>. The profile
+  decides which tools exist and which directory the Claude CLI runs in. Tools reach your data through MCP servers
+  and the vault.</p>
+  <div class="lanes">
+    <div class="lane surface">
+      <h4>Where it's reached</h4>
+      <div class="box surface"><b>Discord DMs</b><span>the owner's assistant, streamed replies</span></div>
+      <div class="box surface"><b>Discord channels</b><span>moderation and expression</span></div>
+      <div class="box surface"><b>Terminal <code>claude</code></b><span>run in the vault, same conversation as DMs</span></div>
+      <div class="box surface"><b><code>qm web</code></b><span>dashboard, brain, settings (localhost)</span></div>
+      <div class="box surface"><b>Task Scheduler</b><span>sync, reconcile, presale, digest, tidy</span></div>
+    </div>
+    <div class="lane core">
+      <h4>Quartermaster (Python)</h4>
+      <div class="box core"><b>surfaces/</b><span>discord_bot, moderation, web, brain, digest_send</span></div>
+      <div class="box core"><b>jobs</b><span>notion_sync, reconcile, digest + presale, claude_tidy</span></div>
+      <div class="box core"><b>agent.py</b><span>profiles, model routing, lessons + conflicts in context</span></div>
+      <div class="box guard"><b>check_tool hook</b><span>re-checks every tool call and path</span></div>
+    </div>
+    <div class="lane model">
+      <h4>Model side</h4>
+      <div class="box model"><b>Claude CLI (claude.exe)</b><span>one subprocess per turn, via the Agent SDK</span></div>
+      <div class="box model"><b>MCP: google</b><span>Calendar read/write, Gmail read-only</span></div>
+      <div class="box model"><b>MCP: microsoft, spotify</b><span>To Do; listening history</span></div>
+      <div class="box model"><b>MCP: qm</b><span>Claude page, Notion proposals, sync, dev queue, lessons</span></div>
+    </div>
+    <div class="lane store">
+      <h4>Where things live</h4>
+      <div class="box store"><b>Vault (private git)</b><span>Notion mirror, facts, lessons, config, mutes</span></div>
+      <div class="box store"><b>state.db</b><span>machine counts only; rebuildable</span></div>
+      <div class="box store"><b>Notion</b><span>source of truth for what you write</span></div>
+      <div class="box store"><b>Public APIs</b><span>Ticketmaster, Open-Meteo, Last.fm, shops</span></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h3>One DM, start to finish</h3>
+  <p class="sub">What happens between sending the bot a message and its reply.</p>
+  <div class="flow">
+    <div class="step" style="--k:var(--c-surface)"><b>Route</b>The bot sees a DM from the owner and picks the owner profile. "stop" and "start fresh" are handled in code.</div>
+    <div class="step" style="--k:var(--c-core)"><b>Build the turn</b>Model picked by a heuristic (Haiku, Sonnet or Opus). Lessons and open conflicts are appended, read fresh.</div>
+    <div class="step" style="--k:var(--c-model)"><b>Run Claude</b><code>claude.exe</code> starts with cwd = the vault and continues the shared session, so the terminal sees it too.</div>
+    <div class="step" style="--k:var(--c-guard)"><b>Every tool call checked</b><code>check_tool</code> allows only the profile's tools and confines file access to the vault.</div>
+    <div class="step" style="--k:var(--c-store)"><b>Reach your data</b>Vault files directly; calendar, mail, tasks and Notion through MCP servers.</div>
+    <div class="step" style="--k:var(--c-surface)"><b>Stream back</b>Text arrives as it's written, with a live status line that's removed at the end. The whole turn is logged.</div>
+  </div>
+</section>
+
+<section>
+  <h3>The security boundary</h3>
+  <p class="sub">A prompt rule is not a boundary against someone who can send text, and emails and web pages are
+  written by strangers. Containment is enforced three ways, because each alone has leaked once.</p>
+  <div class="layers">
+    <div class="layer"><div class="n">1</div><div><b><code>tools</code> decides what exists</b><span>A profile with an empty list has no built-in tools at all. (<code>allowed_tools</code> only pre-approves, which once left the full toolset reachable.)</span></div></div>
+    <div class="layer"><div class="n">2</div><div><b><code>dontAsk</code> refuses anything not pre-approved</b><span>The CLI also loads the account's claude.ai connectors (Gmail send, Drive share); none belong to any profile.</span></div></div>
+    <div class="layer"><div class="n">3</div><div><b><code>check_tool</code> checks arguments</b><span>Files and glob patterns stay inside the profile's directory; <code>.claude/</code>, <code>.mcp.json</code>, <code>.git/</code> and the dev queue can't be written. Bash is never available over chat.</span></div></div>
+  </div>
+  <p class="sub" style="margin-top:18px"><b>Moderation: the model parses, code executes.</b> The model never holds a moderation tool, so channel text can at worst produce a plan a human declines.</p>
+  <div class="pipe">
+    <span class="chip model">model: English → OpsPlan</span><span class="arrow">→</span>
+    <span class="chip code">invoker's real permission</span><span class="arrow">→</span>
+    <span class="chip code">role hierarchy both ways</span><span class="arrow">→</span>
+    <span class="chip code">match targets</span><span class="arrow">→</span>
+    <span class="chip code">preview + confirm</span><span class="arrow">→</span>
+    <span class="chip code">execute</span>
+  </div>
+  <p class="sub" style="margin-top:18px"><b>Writes that need you.</b> Notion pages other than the agent's own "Claude" page
+  are only <em>proposed</em>; a Confirm button in Discord applies them. The dashboard's editors require the page's
+  CSRF token and an expected Host header, and refuse a save if the agent changed the file since you opened it.</p>
+</section>
+
+<section>
+  <h3>Profiles</h3>
+  <div class="tablewrap"><table>
+    <tr><th>Profile</th><th>Used by</th><th>Runs in</th><th>Tools</th><th>Session</th><th>Model</th></tr>
+    <tr><td><b>owner</b></td><td>your DMs, the terminal</td><td>the vault</td><td class="y">vault files, web research, MCP</td><td>shared</td><td>routed per turn</td></tr>
+    <tr><td><b>public</b></td><td>other people in channels</td><td>own workspace</td><td class="n">none</td><td>separate</td><td class="off">disabled</td></tr>
+    <tr><td><b>parser</b></td><td>moderation requests</td><td>own workspace</td><td class="n">none, JSON out</td><td>none</td><td>Haiku</td></tr>
+    <tr><td><b>digest</b></td><td>the digest</td><td>own workspace</td><td class="n">none</td><td>none</td><td>Sonnet</td></tr>
+    <tr><td><b>tidy</b></td><td>weekly Claude page tidy</td><td>own workspace</td><td class="n">none</td><td>none</td><td>Sonnet</td></tr>
+    <tr><td><b>reconcile</b></td><td>daily knowledge check</td><td>own workspace</td><td class="n">none, JSON out</td><td>none</td><td>Sonnet</td></tr>
+  </table></div>
+  <p class="sub" style="margin-top:10px">Only the owner profile may run in the vault: every run leaves a session file there, and the next DM would continue it.</p>
+</section>
+
+<section>
+  <h3>Memory: how it learns and stays consistent</h3>
+  <div class="loop">
+    <div class="card">
+      <h5>Where knowledge comes from</h5>
+      <ul>
+        <li><b>Notion</b> → pulled one way into <code>notion/</code> daily or on request; pages deleted in Notion leave the mirror. Never edited in the vault.</li>
+        <li><b>Conversation</b> → the agent writes <code>facts/</code> (about you, plans, interests).</li>
+        <li><b>Corrections</b> → <code>record_lesson</code> adds a rule to <code>facts/lessons.md</code>, read into every reply and digest.</li>
+        <li><b>The Claude page</b> in Notion is the agent's own; it writes there freely.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h5>How it stays true</h5>
+      <ol>
+        <li>You say something changed. The agent fixes <em>every</em> file that states it in the same turn.</li>
+        <li>Daily at 07:30, <code>reconcile</code> merges duplicates and drops dates that have passed, with backups.</li>
+        <li>Disagreements it can't settle go to <code>conflicts.md</code> and to you as a question.</li>
+        <li>You answer in plain words; the answer propagates to every file.</li>
+      </ol>
+    </div>
+  </div>
+  <p class="sub" style="margin-top:12px">Three rules explain most of it: one source of truth per thing; mute is permanent and reminding is the default;
+  markdown for what a person reads, SQLite for what the machine counts.</p>
+</section>
+
+<section>
+  <h3>A day on the schedule</h3>
+  <p class="sub">Windows Task Scheduler, while logged in. Each job is a fresh <code>qm</code> process; a failure is logged, never DM'd as noise.</p>
+  <div class="timeline" role="img" aria-label="Daily schedule: 07:00 Notion sync, 07:30 reconcile, 08:00 presale check, Sunday 09:00 Claude page tidy, 18:00 digest">
+    <div class="axis"></div>
+    <span class="tick" style="left:calc(24px + (100% - 48px) * 0)">06:00</span>
+    <span class="tick" style="left:calc(24px + (100% - 48px) * .5)">12:00</span>
+    <span class="tick" style="left:calc(24px + (100% - 48px) * .75)">15:00</span>
+    <span class="tick" style="left:calc(24px + (100% - 48px) * 1)">18:00</span>
+    <div class="ev" style="--k:var(--c-store); left:calc(24px + (100% - 48px) * .0833)"><b>07:00</b>Notion sync</div>
+    <div class="ev low" style="--k:var(--c-core); left:calc(24px + (100% - 48px) * .125)"><b>07:30</b>reconcile</div>
+    <div class="ev" style="--k:var(--c-surface); left:calc(24px + (100% - 48px) * .1667)"><b>08:00</b>presale check</div>
+    <div class="ev low" style="--k:var(--c-model); left:calc(24px + (100% - 48px) * .25)"><b>Sun 09:00</b>Claude page tidy</div>
+    <div class="ev" style="--k:var(--c-guard); left:calc(24px + (100% - 48px) * 1); transform:translateX(-75%)"><b>digest.hour</b>digest DM</div>
+  </div>
+  <p class="sub">The digest time comes from <code>config.toml</code> (daily for now, weekly on Sundays later). Sync runs first, so the other jobs read a fresh mirror.</p>
+</section>
+
+<section>
+  <h3>Module map</h3>
+  <div class="mods">
+    <div class="mod"><code>agent.py</code><span>profiles, model routing, check_tool, one turn</span></div>
+    <div class="mod"><code>cli.py</code><span>every <code>qm</code> command</span></div>
+    <div class="mod"><code>config.py</code><span>.env secrets, vault config.toml preferences</span></div>
+    <div class="mod"><code>notion_sync.py</code><span>one-way Notion pull into the mirror</span></div>
+    <div class="mod"><code>digest.py</code><span>collectors (calendar, weather, events, prices, stale pages) → one prompt</span></div>
+    <div class="mod"><code>reconcile.py</code><span>daily dedupe and conflict check of facts</span></div>
+    <div class="mod"><code>lessons.py</code><span>corrections kept and read every turn</span></div>
+    <div class="mod"><code>notion_writes.py</code><span>proposals applied only after Confirm</span></div>
+    <div class="mod"><code>claude_tidy.py</code><span>weekly prune of the agent's Notion page</span></div>
+    <div class="mod"><code>discord_ops.py</code><span>moderation plans, permissions, matching</span></div>
+    <div class="mod"><code>integrations/</code><span>google, microsoft, spotify, notion, ticketmaster, weather, lastfm, prices</span></div>
+    <div class="mod"><code>servers/</code><span>MCP servers over stdio (<code>qm mcp &lt;name&gt;</code>)</span></div>
+    <div class="mod"><code>surfaces/</code><span>discord_bot, moderation, web, brain, digest_send</span></div>
+    <div class="mod"><code>schedule.py</code><span>Task Scheduler wiring</span></div>
+    <div class="mod"><code>procs.py</code><span><code>qm quit</code>: stop every Quartermaster process</span></div>
+    <div class="mod"><code>db.py</code><span>state.db: counts and observations, rebuildable</span></div>
+  </div>
+</section>
+
+<footer>The reasons behind each decision are in <code>CLAUDE.md</code>; how to use it is in <code>docs/GUIDE.md</code>;
+what's next is in <code>docs/ROADMAP.md</code>.</footer>
+</main>
+</body>
+</html>

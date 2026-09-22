@@ -27,7 +27,7 @@ from pathlib import Path
 
 from . import agent, db, mutes, stale
 from .config import Settings
-from .integrations import lastfm, prices, ticketmaster
+from .integrations import lastfm, prices, ticketmaster, weather
 from .integrations.google import list_events
 from .integrations.spotify import accounts as spotify_accounts, top_artist_names, top_artists
 from .surfaces.digest_send import send_dm
@@ -53,6 +53,13 @@ phrasing rather than repeating the same line every time.
 it couldn't be checked rather than omitting it silently.
 - If wishlist price checks failed for some items, mention that briefly too - \
 "couldn't check X" - never imply "no change" for something that failed.
+- Always include a **Weather** section: one short line per day in order \
+(weekday, summary, high/low, rain chance when it's 20% or more). Mark a day \
+with ⚠️ and a few words only where the weather meets a plan: a calendar entry \
+or an event you're mentioning that day, especially anything outdoors. A day's \
+"rough" list says why it's worth planning around; a rough day with nothing \
+planned gets no ⚠️, and a mild day can still get one if it's rain on an \
+outdoor plan.
 """
 
 
@@ -85,6 +92,13 @@ def _collect_calendar(settings: Settings) -> str:
         return list_events(settings, today.isoformat(), (today + timedelta(days=days)).isoformat())
     except Exception as exc:  # noqa: BLE001 - see above
         return _unavailable("calendar", exc)
+
+
+def _collect_weather(settings: Settings) -> list[dict] | str:
+    try:
+        return weather.forecast(settings, 7)
+    except Exception as exc:  # noqa: BLE001 - see above
+        return _unavailable("weather", exc)
 
 
 def _collect_events(settings: Settings, conn: sqlite3.Connection, mute_list, record: bool) -> dict:
@@ -161,6 +175,7 @@ def build_payload(settings: Settings, conn: sqlite3.Connection, *, record: bool)
         "as_of": date.today().isoformat(),
         "home": settings.prefs["home"]["label"],
         "calendar": _collect_calendar(settings),
+        "weather": _collect_weather(settings),
         "events": _collect_events(settings, conn, mute_list, record),
         "prices": _collect_prices(settings, conn, mute_list, record),
         "stale_pages": _collect_stale(settings, conn, mute_list, record),

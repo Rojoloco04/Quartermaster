@@ -47,7 +47,8 @@ From a terminal: `qm mute artist/Tool --reason "not my thing"`.
 
 ## The digest and presale pings
 
-- **Digest**: a DM with your week ahead, events worth travelling to, wishlist
+- **Digest**: a DM with your week ahead, a 7-day forecast for home (⚠️ on days
+  where the weather meets a plan), events worth travelling to, wishlist
   price drops and Notion pages that look abandoned. Daily for now; weekly on
   Sundays once `qm schedule install --digest-cadence weekly` is run.
 - **Presale ping**: 08:00, only for artists in your Spotify top artists or named
@@ -71,14 +72,44 @@ targets exactly that message.
 - `qm web` opens a dashboard at http://127.0.0.1:8766: whether the bot is up,
   scheduled jobs, recent turns with cost, the live conversation, a live log,
   digests and mutes.
+- **Settings** (http://127.0.0.1:8766/settings) shows everything Quartermaster
+  runs on and lets you change it in place: the preferences in force (yours vs
+  default), what it knows (`facts/`, including lessons), the agent's
+  instructions, mutes and the dev queue. Secrets show only as set or not set.
+  Click Edit, change it, Save (or Ctrl+S). A save is refused if the agent
+  changed the file after you opened it, and preferences must be valid TOML.
+- **Lessons**: tell the bot it got something wrong, in any words, and it records
+  the rule in `facts/lessons.md`. Every later reply and digest follows it. Fix
+  or delete a lesson on the Settings page.
+- **Brain** (http://127.0.0.1:8766/brain) draws what the vault knows as a graph:
+  the Notion mirror and `facts/` only. Digests, the inbox, system files and
+  READMEs are working material and stay out until they're filed into facts. Each note
+  a dot coloured by section, sized by how connected it is, joined by its links,
+  its folder, and titles it mentions (dashed). Recently edited notes pulse;
+  notes the agent read or wrote lately get a ring and send sparks along their
+  edges. Hover for details, click to read a note (facts have an Edit button), drag to move, scroll to zoom,
+  double-click to reset, and type in the box to find one. The URL keeps the
+  open note, so a link to `/brain#facts/interests.md` opens it.
 - The full log: `%LOCALAPPDATA%\quartermaster\Logs\quartermaster.log`, or live
   in PowerShell: `Get-Content -Wait -Tail 50 $env:LOCALAPPDATA\quartermaster\Logs\quartermaster.log`
 - `qm doctor` checks configuration when something seems wrong.
 
 ## Running it
 
-- `qm bot` runs the bot. Stop the old one first
-  (`Get-Process qm | Stop-Process -Force`): two running bots double-reply.
+- `qm quit` (or `qm stop`) stops everything: the bot, the dashboard and any job
+  mid-run. Then `qm bot` starts the bot again: two running bots double-reply.
 - `qm schedule install --digest-cadence daily` (or `weekly`) registers the Notion
-  sync (07:00), presale check (08:00) and digest. `qm schedule status` shows them.
+  sync (07:00), knowledge reconcile (07:30), presale check (08:00) and digest.
+  `qm schedule status` shows them.
+- `qm reconcile` checks what Quartermaster knows against itself and Notion:
+  it merges duplicates, drops plans whose date has passed, and DMs you a
+  question wherever two sources disagree (also listed on the Settings page).
+  `--dry-run` shows what it would do. It runs daily at 07:30 on its own.
+- Changed something in Notion and don't want to wait for the 07:00 sync? Ask
+  the bot to sync ("sync my notion"), or run `qm sync`. Pages you delete in
+  Notion leave the mirror and the brain on the next sync. If a sync would remove
+  more than half the mirror at once, it removes nothing and says so (usually a
+  sharing change in Notion); `qm sync --force` goes ahead anyway.
+- Told the bot something changed ("I already have the tickets")? It updates
+  every note that says otherwise right away and tells you what it changed.
 - `qm sync` pulls Notion into the vault by hand.

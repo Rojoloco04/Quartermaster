@@ -3,6 +3,8 @@
 A personal agent: a weekly digest, a Notion-mirrored memory, and one
 conversation you can reach from Discord or from Claude Code.
 
+**[How it fits together](docs/architecture.html)**: the architecture as a
+one-page visual (open the file, or `/architecture` in `qm web`).
 `docs/GUIDE.md` is how to use it (`qm web` serves it too). `CLAUDE.md` explains
 what exists and why; `docs/ROADMAP.md` covers what's next.
 

@@ -236,6 +236,15 @@ class TestToolGuard:
         assert agent.check_tool(owner, "Write", {"file_path": "../escape.md"})
         assert agent.check_tool(owner, "Grep", {"path": str(tmp_path)})
 
+    def test_glob_patterns_stay_inside_the_vault(self, settings: Settings):
+        # The owner agent once globbed the whole home directory looking for the code.
+        owner = owner_profile(settings)
+        for pattern in ("C:/Users/you/**/config.py", "/etc/*", "\\\\server\\share\\*", "../**", "facts/../../x", "~/.ssh/*"):
+            assert agent.check_tool(owner, "Glob", {"pattern": pattern}), pattern
+        assert agent.check_tool(owner, "Grep", {"pattern": "x", "glob": "../*.env"})
+        assert agent.check_tool(owner, "Glob", {"pattern": "facts/**/*.md"}) is None
+        assert agent.check_tool(owner, "Grep", {"pattern": "..", "glob": "*.md"}) is None
+
     def test_owner_may_not_write_what_runs_code_later(self, settings: Settings):
         # A prompt injection that edits these gets code execution on the next run.
         owner = owner_profile(settings)

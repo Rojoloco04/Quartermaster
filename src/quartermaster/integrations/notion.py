@@ -1,8 +1,8 @@
 """Notion REST client.
 
 Notion is the source of truth for the user's knowledge, todos and wishlists.
-This client only reads; changes are proposed in 90-System/pending.md and made
-by the owner.
+The mirror only reads through this client; writes elsewhere are the Claude page
+(``claude_page``) and proposals the owner confirms (``notion_writes``).
 
 The important find here is ``GET /v1/pages/{id}/markdown``: a first-class REST
 endpoint that returns a page as markdown. It means the mirror is a

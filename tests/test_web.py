@@ -78,7 +78,7 @@ def test_markdown_escapes_html():
 
 def test_token_gate(settings, monkeypatch):
     monkeypatch.setattr(web, "dashboard", lambda s: "<p>dash</p>")
-    client = TestClient(web.build_app(settings, token="s3cret"))
+    client = TestClient(web.build_app(settings, token="s3cret"), base_url="http://127.0.0.1")
     assert client.get("/").status_code == 401
     assert client.get("/?token=wrong").status_code == 401
     assert client.get("/?token=s3cret").status_code == 200  # redirected, cookie set

@@ -112,7 +112,10 @@ Streaming with NVENC hardware transcoding.
 
 - **`qm web`** dashboard, **streaming Discord replies**, plain-word session
   control, the **dev queue**, **Last.fm** taste signal, **approved Notion
-  writes** anywhere plus the weekly **Claude page tidy**.
+  writes** anywhere plus the weekly **Claude page tidy**, the **brain** graph
+  of the vault, **weather** in the digest, **lessons** from corrections, an
+  editable **settings** page and an **architecture** page in `qm web`, the daily
+  **reconcile** of facts with conflicts put to the owner, and `qm quit`.
 
 ### Planned
 
@@ -146,7 +149,7 @@ Streaming with NVENC hardware transcoding.
   use and a scheduler owns timing; keeping n8n would mean two things that both "run
   jobs on a timer", with workflows locked in a database instead of versioned.
 - **Two-way Notion sync.** Notion is authored by a human; the vault mirrors it one
-  way. The only writes back are approved proposals via `pending.md`, plus the one
+  way. The only writes back are proposals the owner confirms in Discord, plus the one
   page the agent owns. No merge logic, so no conflict bugs.
 - **Nightly reflection / auto-distilled memory.** Deferred rather than rejected. A
   folder plus a facts file covers most of the value; add distillation when

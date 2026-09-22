@@ -30,12 +30,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import sys
 import uuid
 from contextlib import aclosing
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -51,6 +52,7 @@ from claude_agent_sdk import (
     query,
 )
 
+from . import lessons
 from .config import Settings
 
 log = logging.getLogger(__name__)
@@ -125,7 +127,15 @@ OWNER_LIMITS = (
     "any wording, call the qm queue_change tool right away - don't look for the "
     "code or ask them to rephrase - then tell them in one line. Queue things you "
     "notice yourself with source='noticed'. Your long-term memory is this "
-    "vault's facts/ folder; there is no other memory."
+    "vault's facts/ folder; there is no other memory. "
+    "When the owner corrects you - you got a fact wrong, did something they "
+    "didn't want, or they tell you how they want something done - call the qm "
+    "record_lesson tool right away with the general rule to follow next time, "
+    "then fix what's in front of you. "
+    "When something you know changes (\"I already have the tickets\"), Grep "
+    "facts/ for every place that states it and fix all of them in the same "
+    "turn, keeping each fact in one place; if a Notion page states the old "
+    "version, propose_notion_edit it. Say in one line what you updated."
 )
 
 @dataclass(frozen=True)
@@ -156,6 +166,12 @@ class Profile:
     # visibly) waiting forever - the SDK does not time out on its own, and a
     # stuck turn produces neither a message nor an exception.
     timeout_seconds: float = 240.0
+    # Read fresh on every turn and appended to the system prompt, so a lesson
+    # recorded in one DM applies to the very next one without a restart.
+    lessons_file: Path | None = None
+    # Same, for the reconcile job's open questions (owner only): so "I already
+    # have the tickets" is understood as the answer to one of them.
+    conflicts_file: Path | None = None
 
 
 def owner_profile(settings: Settings) -> Profile:
@@ -168,6 +184,8 @@ def owner_profile(settings: Settings) -> Profile:
         share_session=True,
         mcp_servers=integration_servers(),
         system_append=DISCORD_STYLE + " " + OWNER_LIMITS,
+        lessons_file=lessons.lessons_path(settings),
+        conflicts_file=settings.system_dir / "conflicts.md",
     )
 
 
@@ -240,6 +258,7 @@ def digest_profile(settings: Settings) -> Profile:
         share_session=False,
         max_turns=1,
         system_append=DISCORD_STYLE + (f"\n\nThe owner's standing instructions:\n{rules}" if rules else ""),
+        lessons_file=lessons.lessons_path(settings),
     )
 
 
@@ -254,6 +273,23 @@ def tidy_profile(settings: Settings) -> Profile:
         allowed_tools=[],
         share_session=False,
         max_turns=1,
+        timeout_seconds=600.0,
+    )
+
+
+def reconcile_profile(settings: Settings, schema: dict) -> Profile:
+    """Reads the facts and the Notion mirror, returns edits and conflicts as
+    JSON. No tools: code decides which edits are safe to apply."""
+    return Profile(
+        name="reconcile",
+        cwd=settings.workspace("reconcile"),
+        tools=[],
+        allowed_tools=[],
+        share_session=False,
+        # 1 was refused live ("Reached maximum number of turns"): a long JSON
+        # answer can take the structured-output step a second turn.
+        max_turns=3,
+        output_schema=schema,
         timeout_seconds=600.0,
     )
 
@@ -325,7 +361,7 @@ def pick_model(prompt: str, profile: Profile) -> str:
     if profile.name == "public":
         # Low-stakes and already contained by an empty tool list either way.
         return HAIKU
-    if profile.name in ("digest", "tidy"):
+    if profile.name in ("digest", "tidy", "reconcile"):
         # A structured data dump or a whole page to rewrite, not conversational
         # text - the word-count and keyword heuristics below were built to read
         # a chat message. Fixed at Sonnet rather than guessed.
@@ -348,6 +384,13 @@ def _options(profile: Profile, prompt: str = "", cli_path: str | None = None) ->
         extra["cli_path"] = cli_path
 
     model = pick_model(prompt, profile)
+    from . import reconcile  # imports agent; resolved at call time
+
+    append = "\n\n".join(p for p in (
+        profile.system_append,
+        lessons.for_prompt(profile.lessons_file),
+        reconcile.for_prompt(profile.conflicts_file),
+    ) if p)
     return ClaudeAgentOptions(
         cwd=str(profile.cwd),
         model=model,
@@ -360,7 +403,7 @@ def _options(profile: Profile, prompt: str = "", cli_path: str | None = None) ->
         system_prompt={
             "type": "preset",
             "preset": "claude_code",
-            **({"append": profile.system_append} if profile.system_append else {}),
+            **({"append": append} if append else {}),
         },
         tools=profile.tools,
         allowed_tools=profile.allowed_tools,
@@ -392,9 +435,20 @@ def check_tool(profile: Profile, tool: str, tool_input: dict) -> str | None:
     """
     allowed = tool in profile.allowed_tools or any(
         a.startswith("mcp__") and tool.startswith(a + "__") for a in profile.allowed_tools
+    ) or (
+        # How the SDK delivers output_schema answers: it only returns data. It
+        # was denied once, and the reconcile job looped until max_turns.
+        tool == "StructuredOutput" and profile.output_schema is not None
     )
     if not allowed or tool in NEVER_OVER_CHAT:
         return f"{tool} is not available to the {profile.name} profile."
+
+    if tool in ("Glob", "Grep"):
+        # A pattern is a path too: Glob("C:/Users/**") once searched the whole
+        # home directory with no `path` given.
+        pattern = str(tool_input.get("pattern" if tool == "Glob" else "glob") or "")
+        if PureWindowsPath(pattern).anchor or pattern.startswith(("/", "\\", "~")) or ".." in re.split(r"[\\/]", pattern):
+            return f"{tool} patterns must be relative to {profile.cwd.resolve()}."
 
     key = _PATH_KEYS.get(tool)
     if key is None or not tool_input.get(key):

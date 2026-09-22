@@ -5,4 +5,4 @@ sync.
 
 This is a read-only mirror of your Notion workspace so the agent can grep your
 knowledge locally instead of making an API call per lookup. Notion remains the
-source of truth; to change something, see `../90-System/pending.md`.
+source of truth; to change something, the agent proposes it and you confirm in Discord.

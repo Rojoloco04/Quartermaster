@@ -19,7 +19,8 @@ SYNC_TASK = "Quartermaster Notion Sync"
 TIDY_TASK = "Quartermaster Claude Page Tidy"
 DIGEST_TASK = "Quartermaster Digest"
 PRESALE_TASK = "Quartermaster Presale Check"
-TASKS = (SYNC_TASK, TIDY_TASK, DIGEST_TASK, PRESALE_TASK)
+RECONCILE_TASK = "Quartermaster Reconcile"
+TASKS = (SYNC_TASK, TIDY_TASK, DIGEST_TASK, PRESALE_TASK, RECONCILE_TASK)
 
 # Before the presale check and the digest, so the stale-page scan reads a
 # mirror that is at most a day old.
@@ -32,6 +33,10 @@ TIDY_DAY, TIDY_HOUR = "SUN", 9
 # A same-day presale ping only helps if it lands before the ticket window
 # it's warning about - early morning, well ahead of typical on-sale times.
 PRESALE_HOUR = 8
+
+# After the sync (so it compares facts with a fresh mirror) and before the
+# digest, so the digest reads reconciled facts.
+RECONCILE_TIME = "07:30"
 
 
 @dataclass(frozen=True)
@@ -71,6 +76,7 @@ def build_tasks(settings: Settings, digest_cadence: str) -> list[ScheduledTask]:
         ScheduledTask(
             PRESALE_TASK, [qm, "presale-check"], ["/sc", "daily", "/st", f"{PRESALE_HOUR:02d}:00"]
         ),
+        ScheduledTask(RECONCILE_TASK, [qm, "reconcile"], ["/sc", "daily", "/st", RECONCILE_TIME]),
     ]
 
 
