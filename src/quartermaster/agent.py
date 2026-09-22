@@ -28,7 +28,10 @@ Sync is turn-level, not live. Neither side sees the other mid-turn.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import sys
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -36,7 +39,12 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ResultMessage,
+    ServerToolResultBlock,
+    ServerToolUseBlock,
     TextBlock,
+    ToolResultBlock,
+    ToolUseBlock,
+    UserMessage,
     query,
 )
 
@@ -46,6 +54,36 @@ log = logging.getLogger(__name__)
 
 VAULT_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "TodoWrite"]
 RESEARCH_TOOLS = ["WebSearch", "WebFetch"]
+
+
+def integration_servers() -> dict:
+    """The owner's MCP servers, launched with this interpreter.
+
+    ``sys.executable -m`` rather than ``qm.exe``: it survives the venv moving
+    and never picks up a different install's qm on PATH.
+    """
+    return {
+        "google": {
+            "type": "stdio",
+            "command": sys.executable,
+            "args": ["-m", "quartermaster.cli", "mcp", "google"],
+        },
+        "microsoft": {
+            "type": "stdio",
+            "command": sys.executable,
+            "args": ["-m", "quartermaster.cli", "mcp", "microsoft"],
+        },
+        "spotify": {
+            "type": "stdio",
+            "command": sys.executable,
+            "args": ["-m", "quartermaster.cli", "mcp", "spotify"],
+        },
+    }
+
+
+# `mcp__<server>` pre-approves every tool that server exposes. A headless turn
+# has nobody to click "allow", so an unapproved tool is an unusable one.
+INTEGRATION_TOOLS = [f"mcp__{name}" for name in integration_servers()]
 
 # Bash is withheld from every Discord profile. The bot is reachable by anyone
 # holding the token, and shell access behind a chat message is a far larger
@@ -82,6 +120,12 @@ class Profile:
     max_turns: int = 30
     enabled: bool = True
     output_schema: dict | None = None
+    mcp_servers: dict = field(default_factory=dict)
+    # A hard ceiling on one turn. Without this, a hung subprocess or a stalled
+    # API call leaves the caller (a Discord "typing..." indicator, most
+    # visibly) waiting forever - the SDK does not time out on its own, and a
+    # stuck turn produces neither a message nor an exception.
+    timeout_seconds: float = 240.0
 
 
 def owner_profile(settings: Settings) -> Profile:
@@ -90,8 +134,9 @@ def owner_profile(settings: Settings) -> Profile:
         name="owner",
         cwd=settings.vault,
         tools=VAULT_TOOLS + RESEARCH_TOOLS,
-        allowed_tools=VAULT_TOOLS + RESEARCH_TOOLS,
+        allowed_tools=VAULT_TOOLS + RESEARCH_TOOLS + INTEGRATION_TOOLS,
         share_session=True,
+        mcp_servers=integration_servers(),
         system_append=DISCORD_STYLE,
     )
 
@@ -138,6 +183,10 @@ def parser_profile(settings: Settings, schema: dict) -> Profile:
         share_session=False,
         max_turns=1,
         output_schema=schema,
+        # Parsing English into JSON should take seconds. It also blocks a live
+        # moderation request someone is waiting on in-channel, so it gets a
+        # much shorter leash than a research-heavy owner turn.
+        timeout_seconds=45.0,
     )
 
 
@@ -154,7 +203,70 @@ class Reply:
         return self.error is None
 
 
-def _options(profile: Profile, cli_path: str | None = None) -> ClaudeAgentOptions:
+# Model IDs, not aliases ("sonnet", "opus", ...) - deterministic regardless
+# of what an alias currently resolves to for this CLI install.
+HAIKU = "claude-haiku-4-5"
+SONNET = "claude-sonnet-5"
+OPUS = "claude-opus-5"
+
+# Content signals that a message needs Opus-level reasoning rather than
+# Sonnet's default. Deliberately narrow: a missed signal just runs on
+# Sonnet, which is usually fine; a false positive spends ~2.5x for nothing.
+_OPUS_SIGNALS = (
+    "architecture", "refactor", "trade-off", "tradeoff", "root cause",
+    "think hard", "think carefully", "design a", "security review",
+    "debug", "deep dive", "plan out",
+)
+
+# Short single-fact lookups where Haiku's speed matters more than Sonnet's
+# extra reasoning - the owner profile still validates nothing it says, but
+# these are the kind of question a wrong answer to gets noticed immediately.
+_HAIKU_STARTS = (
+    "what's on", "what is on", "when is", "when's", "what time",
+    "remind me", "list my", "mark ", "complete ",
+)
+
+_OVERRIDE_TAGS = {"opus:": OPUS, "sonnet:": SONNET, "haiku:": HAIKU}
+
+# What each tier falls back to if the primary is down or overloaded (a 529
+# has been seen mid-way through an ordinary DM). One step toward the middle
+# tier rather than always-down or always-up: Opus keeps most of its quality
+# by dropping to Sonnet, a stuck Sonnet turn still gets answered rather than
+# left hanging, and Haiku - already the floor - steps up rather than nowhere.
+_FALLBACK = {OPUS: SONNET, SONNET: HAIKU, HAIKU: SONNET}
+
+
+def pick_model(prompt: str, profile: Profile) -> str:
+    """Route one turn to the cheapest model likely to do it justice.
+
+    A heuristic, not a classifier call - an extra request just to decide the
+    model would cost as much as a cheap turn itself, working against the
+    point of routing. Wrong guesses are cheap to correct: start a message
+    with "opus:", "sonnet:" or "haiku:" to force that tier for one turn.
+    """
+    lower = prompt.strip().lower()
+
+    for tag, tier in _OVERRIDE_TAGS.items():
+        if lower.startswith(tag):
+            return tier
+
+    if profile.name == "parser":
+        # Fixed-schema extraction, one turn, no tools - code validates every
+        # field afterwards, so reasoning depth buys nothing here.
+        return HAIKU
+    if profile.name == "public":
+        # Low-stakes and already contained by an empty tool list either way.
+        return HAIKU
+
+    word_count = len(lower.split())
+    if word_count > 300 or any(signal in lower for signal in _OPUS_SIGNALS):
+        return OPUS
+    if word_count <= 12 and any(lower.startswith(s) for s in _HAIKU_STARTS):
+        return HAIKU
+    return SONNET
+
+
+def _options(profile: Profile, prompt: str = "", cli_path: str | None = None) -> ClaudeAgentOptions:
     extra: dict[str, object] = {}
     if cli_path:
         # Must be a real executable. The SDK refuses .cmd/.bat wrappers on
@@ -162,8 +274,11 @@ def _options(profile: Profile, cli_path: str | None = None) -> ClaudeAgentOption
         # there is no reliable escaping for it - so the npm shim will not do.
         extra["cli_path"] = cli_path
 
+    model = pick_model(prompt, profile)
     return ClaudeAgentOptions(
         cwd=str(profile.cwd),
+        model=model,
+        fallback_model=_FALLBACK[model],
         **extra,
         # Loads CLAUDE.md and .claude/ from cwd - the same configuration the CLI
         # reads. For the public profile that directory is not the vault, so none
@@ -177,6 +292,7 @@ def _options(profile: Profile, cli_path: str | None = None) -> ClaudeAgentOption
         },
         tools=profile.tools,
         allowed_tools=profile.allowed_tools,
+        mcp_servers=profile.mcp_servers,
         disallowed_tools=NEVER_OVER_CHAT,
         permission_mode="acceptEdits",
         continue_conversation=profile.share_session,
@@ -187,6 +303,13 @@ def _options(profile: Profile, cli_path: str | None = None) -> ClaudeAgentOption
             else {}
         ),
     )
+
+
+def _trunc(value: object, limit: int = 300) -> str:
+    """A log-safe rendering of a tool call's input or result - readable, not
+    a full file dump or email body flooding the log for one turn."""
+    text = value if isinstance(value, str) else repr(value)
+    return text if len(text) <= limit else text[:limit] + f"...[{len(text) - limit} more chars]"
 
 
 async def ask(prompt: str, profile: Profile, cli_path: str | None = None) -> Reply:
@@ -200,22 +323,48 @@ async def ask(prompt: str, profile: Profile, cli_path: str | None = None) -> Rep
 
     profile.cwd.mkdir(parents=True, exist_ok=True)
 
+    # Ties every log line this turn produces - the prompt, each tool call and
+    # result, the outcome - together in one grep, without waiting on the
+    # SDK's own session_id, which isn't known until the ResultMessage lands.
+    # This is the audit trail: nothing the agent does happens off the record.
+    turn_id = uuid.uuid4().hex[:8]
+    log.info(
+        "[%s] %s turn start (model=%s): %s",
+        turn_id, profile.name, pick_model(prompt, profile), _trunc(prompt, 200),
+    )
+
     chunks: list[str] = []
     session_id: str | None = None
     cost: float | None = None
     structured: dict | None = None
     error: str | None = None
 
-    try:
+    async def _drain() -> None:
+        nonlocal session_id, cost, structured, error
         # Drain the stream to completion rather than returning from inside it.
         # Returning early leaves the SDK's async generator suspended and closing
         # it then raises "aclose(): asynchronous generator is already running" -
-        # once per call, on a path that runs on every moderation request.
-        async for message in query(prompt=prompt, options=_options(profile, cli_path)):
+        # once per call, on a path that runs on every moderation request. The
+        # timeout below is not that bug: wait_for cancels this coroutine with
+        # an ordinary CancelledError at whatever await it's sitting on, the
+        # same as any other task cancellation, rather than walking away and
+        # leaving the generator suspended with nothing ever delivered to it.
+        async for message in query(prompt=prompt, options=_options(profile, prompt, cli_path)):
             if isinstance(message, AssistantMessage):
                 for block in message.content:
                     if isinstance(block, TextBlock):
                         chunks.append(block.text)
+                    elif isinstance(block, (ToolUseBlock, ServerToolUseBlock)):
+                        log.info("[%s] tool call: %s(%s)", turn_id, block.name, _trunc(block.input))
+            elif isinstance(message, UserMessage):
+                # Tool results are replayed back through the stream as a
+                # "user" turn - this is the only place a tool's outcome
+                # (including a failure the model then has to react to) shows
+                # up at all.
+                for block in message.content if isinstance(message.content, list) else []:
+                    if isinstance(block, (ToolResultBlock, ServerToolResultBlock)):
+                        status = "error" if getattr(block, "is_error", False) else "ok"
+                        log.info("[%s] tool result (%s): %s", turn_id, status, _trunc(block.content))
             elif isinstance(message, ResultMessage):
                 session_id = message.session_id
                 cost = getattr(message, "total_cost_usd", None)
@@ -227,10 +376,29 @@ async def ask(prompt: str, profile: Profile, cli_path: str | None = None) -> Rep
                     structured = candidate
                 if message.subtype != "success":
                     error = _explain(message.subtype)
+
+    try:
+        await asyncio.wait_for(_drain(), timeout=profile.timeout_seconds)
+    except asyncio.TimeoutError:
+        # No exception from the SDK, no result message - it just never came
+        # back. Without this, the caller (a Discord "typing..." indicator,
+        # most visibly) waits forever: nothing else here ever un-hangs it.
+        log.warning("[%s] timed out after %.0fs (profile=%s)", turn_id, profile.timeout_seconds, profile.name)
+        return Reply(
+            text="".join(chunks).strip(),
+            error=(
+                f"No response after {profile.timeout_seconds:.0f}s - giving up rather than "
+                "hanging. Try again; if it keeps happening, check https://status.claude.com/."
+            ),
+        )
     except Exception as exc:  # noqa: BLE001 - surfaces must report, not crash
-        log.exception("agent query failed (profile=%s)", profile.name)
+        log.exception("[%s] agent query failed (profile=%s)", turn_id, profile.name)
         return Reply(text="".join(chunks).strip(), error=f"{type(exc).__name__}: {exc}")
 
+    log.info(
+        "[%s] turn done: ok=%s cost=$%s session=%s",
+        turn_id, error is None, f"{cost:.4f}" if cost is not None else "?", session_id,
+    )
     return Reply(
         text="".join(chunks).strip(),
         structured=structured,

@@ -59,6 +59,13 @@ MEMBER_ACTIONS: set[str] = {
     "voice_mute", "voice_unmute", "voice_deafen", "voice_undeafen", "disconnect",
 }
 
+# Actions whose permission Discord evaluates in the target's voice channel.
+# A text channel's permissions_for() strips every voice permission - even for
+# an administrator - so checking these where the request was typed always fails.
+VOICE_ACTIONS: set[str] = {
+    "voice_mute", "voice_unmute", "voice_deafen", "voice_undeafen", "disconnect",
+}
+
 # Voice mute has no duration in Discord - it is a toggle. A requested duration
 # is honoured by scheduling the undo, which is best-effort: a bot restart
 # loses the timer and the person stays muted. Say so rather than imply a
@@ -340,6 +347,21 @@ def check_permissions(
         problems.append("I couldn't work out who you meant.")
 
     return PermissionCheck(ok=not problems, problems=problems)
+
+
+def permissions_in(plan: OpsPlan, text_channel: Any, member: Any, target: Any = None) -> Any:
+    """A member's permissions where Discord will actually check this plan.
+
+    Message actions: the channel the request was typed in. Voice actions: the
+    voice channel the target is sitting in, or guild-wide if the target is not
+    known yet or not in voice (execution then reports that plainly).
+    """
+    if plan.action not in VOICE_ACTIONS:
+        return text_channel.permissions_for(member)
+    voice = getattr(target, "voice", None)
+    if voice is not None and voice.channel is not None:
+        return voice.channel.permissions_for(member)
+    return member.guild_permissions
 
 
 def check_hierarchy(invoker: Any, bot_member: Any, target: Any) -> PermissionCheck:

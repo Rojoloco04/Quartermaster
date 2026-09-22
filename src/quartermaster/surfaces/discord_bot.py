@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import logging.handlers
 
 import discord
 
@@ -213,9 +214,20 @@ def run(settings: Settings | None = None) -> int:
         print(f"No vault at {settings.vault}. Run 'qm init' first.")
         return 1
 
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    # Console AND a durable file - stdout disappears the moment this is
+    # backgrounded (as it always is in practice), and "check the log" has to
+    # mean something that's still there after the fact, not just whatever
+    # terminal happened to be attached when something went wrong.
+    settings.log_path.parent.mkdir(parents=True, exist_ok=True)
+    file_handler = logging.handlers.RotatingFileHandler(
+        settings.log_path, maxBytes=10_000_000, backupCount=5, encoding="utf-8"
     )
+    log_format = "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    logging.basicConfig(
+        level=logging.INFO, format=log_format,
+        handlers=[logging.StreamHandler(), file_handler],
+    )
+    log.info("logging to %s", settings.log_path)
 
     # Try with moderation, then without. A feature nobody has switched on in the
     # portal yet must not take down the assistant that gets used every day.

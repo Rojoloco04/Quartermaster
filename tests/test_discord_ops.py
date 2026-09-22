@@ -22,6 +22,7 @@ from quartermaster.discord_ops import (
     check_hierarchy,
     searchable_text,
     check_permissions,
+    permissions_in,
     resolve_member,
 )
 
@@ -183,6 +184,45 @@ class TestPermissions:
     def test_member_action_without_a_target_is_refused(self):
         both = Perms(ban_members=True)
         assert not check_permissions(OpsPlan(action="ban"), both, both).ok
+
+
+class Channel:
+    """Stands in for a discord.py channel: fixed permissions for everyone."""
+
+    def __init__(self, perms: "Perms"):
+        self.perms = perms
+
+    def permissions_for(self, _member):
+        return self.perms
+
+
+class TestPermissionScope:
+    # discord.py's TextChannel.permissions_for() strips every voice permission,
+    # even from an administrator. Checking voice actions there refused everyone.
+    text = Channel(Perms(manage_messages=True))  # no mute_members, as in real life
+    vc = Channel(Perms(mute_members=True))
+
+    def _member(self, in_voice: bool):
+        m = member(1, "linkus")
+        m.guild_permissions = Perms(mute_members=True)
+        m.voice = type("V", (), {"channel": self.vc})() if in_voice else None
+        return m
+
+    def test_voice_action_is_checked_in_the_targets_voice_channel(self):
+        plan = OpsPlan(action="voice_mute", target_user="linkus")
+        target = self._member(in_voice=True)
+        perms = permissions_in(plan, self.text, target, target)
+        assert check_permissions(plan, perms, perms).ok
+
+    def test_voice_action_before_target_is_known_uses_guild_permissions(self):
+        plan = OpsPlan(action="voice_mute", target_user="linkus")
+        invoker = self._member(in_voice=False)
+        assert permissions_in(plan, self.text, invoker).mute_members
+
+    def test_message_action_still_uses_the_text_channel(self):
+        plan = OpsPlan(action="delete")
+        invoker = self._member(in_voice=True)
+        assert permissions_in(plan, self.text, invoker) is self.text.perms
 
 
 class TestHierarchy:

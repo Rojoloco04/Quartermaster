@@ -31,7 +31,9 @@ from ..discord_ops import OpsPlan
 log = logging.getLogger(__name__)
 
 CONFIRM_TIMEOUT = 120.0
-TENOR_ENDPOINT = "https://tenor.googleapis.com/v2/search"
+# Klipy's Tenor-compatible endpoint. Google shut the Tenor API down on
+# 2026-06-30; Klipy (run by ex-Tenor staff) kept the same params and shape.
+GIF_ENDPOINT = "https://api.klipy.com/v2/search"
 PREVIEW_SAMPLE = 5
 
 
@@ -95,6 +97,10 @@ async def parse_request(settings: Settings, request: str) -> tuple[OpsPlan | Non
         return None, f"I couldn't turn that into an action ({exc})."
 
 
+def _who(member: discord.Member) -> str:
+    return f"{member} ({member.id})"
+
+
 async def handle(
     settings: Settings,
     message: discord.Message,
@@ -115,11 +121,16 @@ async def handle(
         return
 
     bot_member = guild.me
-    invoker_perms = channel.permissions_for(message.author)
-    bot_perms = channel.permissions_for(bot_member)
-
-    check = discord_ops.check_permissions(plan, invoker_perms, bot_perms)
+    check = discord_ops.check_permissions(
+        plan,
+        discord_ops.permissions_in(plan, channel, message.author),
+        discord_ops.permissions_in(plan, channel, bot_member),
+    )
     if not check.ok:
+        log.warning(
+            "[mod] denied: %s tried %s in #%s - %s",
+            _who(message.author), plan.action, channel, "; ".join(check.problems),
+        )
         await channel.send("❌ " + "\n".join(check.problems))
         return
 
@@ -134,8 +145,28 @@ async def handle(
                 await channel.send(f"❓ I couldn't find `{plan.target_user}` in this server.")
             return
 
+        # The first check was guild-wide for voice actions; now that we know
+        # which voice channel the target is in, its overwrites get the final say.
+        if plan.action in discord_ops.VOICE_ACTIONS:
+            check = discord_ops.check_permissions(
+                plan,
+                discord_ops.permissions_in(plan, channel, message.author, target),
+                discord_ops.permissions_in(plan, channel, bot_member, target),
+            )
+            if not check.ok:
+                log.warning(
+                    "[mod] denied: %s tried %s on %s in #%s - %s",
+                    _who(message.author), plan.action, target, channel, "; ".join(check.problems),
+                )
+                await channel.send("❌ " + "\n".join(check.problems))
+                return
+
         hierarchy = discord_ops.check_hierarchy(message.author, bot_member, target)
         if not hierarchy.ok:
+            log.warning(
+                "[mod] denied (hierarchy): %s tried %s on %s in #%s - %s",
+                _who(message.author), plan.action, target, channel, "; ".join(hierarchy.problems),
+            )
             await channel.send("❌ " + "\n".join(hierarchy.problems))
             return
 
@@ -196,6 +227,11 @@ async def handle(
         except discord.HTTPException as exc:
             result = f"❌ Discord error: {exc.text or exc}"
 
+        log.info(
+            "[mod] %s executed %s in #%s (target=%s matched=%d): %s",
+            _who(message.author), plan.action, channel, target, len(matched), result,
+        )
+
         # A bare "Sent." reads oddly next to the thing it just sent.
         if plan.action in ("say", "gif"):
             if result.startswith("❌"):
@@ -209,6 +245,8 @@ async def handle(
     await view.wait()
 
     if not view.approved:
+        log.info("[mod] %s cancelled %s in #%s (target=%s matched=%d)",
+                  _who(message.author), plan.action, channel, target, len(matched))
         await prompt_msg.edit(
             content=summary + "\n\n**Cancelled.** Nothing changed.", view=None
         )
@@ -223,20 +261,24 @@ async def handle(
     except discord.HTTPException as exc:
         result = f"❌ Discord error: {exc.text or exc}"
 
+    log.info(
+        "[mod] %s executed %s in #%s (target=%s matched=%d): %s",
+        _who(message.author), plan.action, channel, target, len(matched), result,
+    )
     await prompt_msg.edit(content=summary + f"\n\n{result}", view=None)
 
 
-def _tenor_key() -> str | None:
-    return os.getenv("TENOR_API_KEY") or None
+def _gif_key() -> str | None:
+    return os.getenv("KLIPY_API_KEY") or None
 
 
 async def _find_gif(query: str) -> str | None:
-    """First Tenor result for a query, or None.
+    """First Klipy result for a query, or None.
 
     Optional by design: no key just means gif search is unavailable, not that
     the bot fails to start.
     """
-    key = _tenor_key()
+    key = _gif_key()
     if not key or not query.strip():
         return None
 
@@ -245,19 +287,23 @@ async def _find_gif(query: str) -> str | None:
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.get(
-                TENOR_ENDPOINT,
+                GIF_ENDPOINT,
                 params={
                     "q": query, "key": key, "limit": 1,
                     "media_filter": "gif", "contentfilter": "medium",
                 },
             )
-            resp.raise_for_status()
+            # Not raise_for_status(): its message embeds the URL, and the key
+            # is in the query string, so the traceback would log the secret.
+            if resp.status_code != 200:
+                log.warning("gif search failed: HTTP %s %s", resp.status_code, resp.text[:200])
+                return None
             results = resp.json().get("results") or []
             if not results:
                 return None
             return results[0]["media_formats"]["gif"]["url"]
     except Exception:  # noqa: BLE001 - a failed search is not a crash
-        log.exception("tenor search failed")
+        log.exception("gif search failed")
         return None
 
 
@@ -357,9 +403,9 @@ async def _execute(
         url = await _find_gif(plan.query or "")
         if url is None:
             return (
-                "❌ GIF search needs a Tenor key. Add `TENOR_API_KEY` to .env "
-                "(free at developers.google.com/tenor) and restart me."
-                if not _tenor_key()
+                "❌ GIF search needs a Klipy key. Add `KLIPY_API_KEY` to .env "
+                "(free at partner.klipy.com) and restart me."
+                if not _gif_key()
                 else f"❌ Nothing found for `{plan.query}`."
             )
         await channel.send(url)

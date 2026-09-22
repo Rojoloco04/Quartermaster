@@ -9,14 +9,22 @@ These tests assert the structure, so that granting the public profile a
 capability later cannot quietly grant it the vault as well.
 """
 
+import asyncio
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from quartermaster import agent
 from quartermaster.agent import (
+    HAIKU,
     NEVER_OVER_CHAT,
+    OPUS,
+    SONNET,
     _options,
     owner_profile,
+    parser_profile,
+    pick_model,
     public_profile,
 )
 from quartermaster.config import Settings
@@ -81,9 +89,90 @@ class TestContainment:
                 assert banned in opts.disallowed_tools
                 assert banned not in (opts.allowed_tools or [])
 
+    def test_integrations_reach_the_owner_only(self, settings: Settings):
+        # Calendar and inbox access is personal data. Only the owner profile
+        # may be handed those servers; the others get none at all.
+        assert "google" in _options(owner_profile(settings)).mcp_servers
+        assert _options(public_profile(settings)).mcp_servers == {}
+        assert _options(parser_profile(settings, {})).mcp_servers == {}
+
+    def test_owner_integration_tools_are_preapproved(self, settings: Settings):
+        # A Discord turn has nobody to click "allow"; unapproved means unusable.
+        assert "mcp__google" in owner_profile(settings).allowed_tools
+
     def test_options_carry_the_profile_cwd(self, settings: Settings):
         assert _options(public_profile(settings)).cwd == str(public_profile(settings).cwd)
         assert _options(owner_profile(settings)).cwd == str(settings.vault)
+
+
+class TestModelRouting:
+    def test_parser_always_gets_haiku(self, settings):
+        # Fixed-schema extraction, one turn, no tools - code validates every
+        # field afterwards. Content is irrelevant; the profile decides.
+        profile = parser_profile(settings, {})
+        assert pick_model("ban everyone forever", profile) == HAIKU
+        assert pick_model("say hi", profile) == HAIKU
+
+    def test_public_always_gets_haiku(self, settings):
+        assert pick_model("explain quantum computing in depth", public_profile(settings)) == HAIKU
+
+    def test_owner_default_is_sonnet(self, settings):
+        profile = owner_profile(settings)
+        assert pick_model("what's the weather like tomorrow", profile) == SONNET
+
+    def test_owner_long_or_hard_prompt_escalates_to_opus(self, settings):
+        profile = owner_profile(settings)
+        assert pick_model("help me think through this architecture decision", profile) == OPUS
+        assert pick_model("word " * 400, profile) == OPUS
+
+    def test_owner_quick_lookup_drops_to_haiku(self, settings):
+        profile = owner_profile(settings)
+        assert pick_model("what's on my calendar today", profile) == HAIKU
+        assert pick_model("remind me to call mom", profile) == HAIKU
+
+    def test_explicit_tag_always_wins(self, settings):
+        # The owner's escape hatch when the heuristic guesses wrong.
+        profile = owner_profile(settings)
+        assert pick_model("opus: say hi", profile) == OPUS
+        assert pick_model("haiku: help me think through this architecture decision", profile) == HAIKU
+        assert pick_model("sonnet: what's on my calendar today", profile) == SONNET
+
+    def test_options_carries_the_picked_model(self, settings):
+        profile = owner_profile(settings)
+        assert _options(profile, "opus: hello").model == OPUS
+        assert _options(profile, "haiku: what's on my calendar").model == HAIKU
+
+    def test_every_tier_has_a_fallback_and_never_falls_back_to_itself(self, settings):
+        # A 529 has been seen mid-DM; fallback_model is what keeps a turn
+        # from just dying when the primary tier is briefly unavailable.
+        profile = owner_profile(settings)
+        for tag, primary in (("opus:", OPUS), ("sonnet:", SONNET), ("haiku:", HAIKU)):
+            opts = _options(profile, f"{tag} hello")
+            assert opts.model == primary
+            assert opts.fallback_model is not None
+            assert opts.fallback_model != primary
+
+
+class TestTimeout:
+    async def test_a_stuck_query_times_out_rather_than_hanging_forever(self, settings, monkeypatch):
+        """Regression: nothing in the SDK times out on its own. Without this,
+        a stalled subprocess or a slow API call leaves the caller (a Discord
+        "typing..." indicator, most visibly) waiting forever, with no
+        exception and no message ever sent."""
+
+        async def hangs(*, prompt, options):
+            await asyncio.sleep(3600)
+            yield  # pragma: no cover - the sleep above never lets this run
+
+        monkeypatch.setattr(agent, "query", hangs)
+        profile = replace(parser_profile(settings, {}), timeout_seconds=0.05)
+
+        # Bounded from the outside too: if ask() regresses back to hanging,
+        # this fails the test cleanly instead of freezing the whole suite.
+        reply = await asyncio.wait_for(agent.ask("hi", profile), timeout=5)
+
+        assert not reply.ok
+        assert "No response after" in reply.error
 
 
 class TestSplitMessage:

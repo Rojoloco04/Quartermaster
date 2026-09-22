@@ -133,12 +133,41 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         ("NOTION_CLAUDE_PAGE_ID", settings.notion_claude_page_id, "phase 1 - writable page"),
         ("DISCORD_BOT_TOKEN", settings.discord_bot_token, "phase 2 - the bot"),
         ("DISCORD_OWNER_ID", settings.discord_owner_id, "phase 2 - who the bot answers"),
+        ("GOOGLE_CLIENT_ID", settings.google_client_id, "phase 3 - calendar + gmail"),
+        ("GOOGLE_CLIENT_SECRET", settings.google_client_secret, "phase 3 - calendar + gmail"),
+        ("MS_CLIENT_ID", settings.microsoft_client_id, "phase 3 - to do"),
+        ("SPOTIFY_CLIENT_ID", settings.spotify_client_id, "phase 3 - taste signal"),
+        ("SPOTIFY_CLIENT_SECRET", settings.spotify_client_secret, "phase 3 - taste signal"),
     ]
     print()
     for name, value, why in secrets:
         mark = OK if value else WARN
         state = "set" if value else f"not set ({why})"
         print(f"[{mark}] {name:<22} {state}")
+
+    if settings.google_client_id:
+        from .integrations import google
+
+        labels = google.accounts(settings)
+        mark = OK if labels else WARN
+        described = [
+            f"{lb} ({'+'.join(google.account_services(settings, lb)) or 'no access'})" for lb in labels
+        ]
+        print(f"[{mark}] google accts {', '.join(described) or 'none - run: qm auth google <label>'}")
+
+    if settings.microsoft_client_id:
+        from .integrations import microsoft
+
+        labels = microsoft.accounts(settings)
+        mark = OK if labels else WARN
+        print(f"[{mark}] microsoft accts {', '.join(labels) or 'none - run: qm auth microsoft <label>'}")
+
+    if settings.spotify_client_id:
+        from .integrations import spotify
+
+        labels = spotify.accounts(settings)
+        mark = OK if labels else WARN
+        print(f"[{mark}] spotify accts {', '.join(labels) or 'none - run: qm auth spotify <label>'}")
 
     if settings.db_path.exists():
         with db.session(settings.db_path) as conn:
@@ -238,6 +267,74 @@ def cmd_mute(args: argparse.Namespace) -> int:
     return 0
 
 
+def _register_mcp_servers(settings) -> Path:
+    """Point the vault's .mcp.json at our servers so terminal `claude` gets the
+    same integrations as the bot. Merges; never drops servers added by hand."""
+    import json
+
+    from .agent import integration_servers
+
+    path = settings.vault / ".mcp.json"
+    config = json.loads(path.read_text("utf-8")) if path.exists() else {}
+    config.setdefault("mcpServers", {}).update(integration_servers())
+    path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def cmd_auth(args: argparse.Namespace) -> int:
+    settings = load_settings()
+
+    if args.service == "google":
+        from .integrations import google
+
+        try:
+            print(f"Opening a browser to authorise Google account '{args.label}'...")
+            email, services = google.authorize(settings, args.label, args.only)
+        except (google.GoogleError, RuntimeError) as exc:
+            print(f"Failed: {exc}")
+            return 1
+        print(f"Authorised '{args.label}' as {email} for: {', '.join(services)}.")
+        print(f"Token saved to {google.token_path(settings, args.label)}")
+    elif args.service == "microsoft":
+        from .integrations import microsoft
+
+        try:
+            print(f"Opening a browser to authorise Microsoft account '{args.label}'...")
+            email = microsoft.authorize(settings, args.label)
+        except (microsoft.MicrosoftError, RuntimeError) as exc:
+            print(f"Failed: {exc}")
+            return 1
+        print(f"Authorised '{args.label}' as {email} for: to do.")
+        print(f"Token saved to {microsoft.token_path(settings, args.label)}")
+    else:
+        from .integrations import spotify
+
+        try:
+            print(f"Opening a browser to authorise Spotify account '{args.label}'...")
+            name = spotify.authorize(settings, args.label)
+        except (spotify.SpotifyError, RuntimeError) as exc:
+            print(f"Failed: {exc}")
+            return 1
+        print(f"Authorised '{args.label}' as {name} for: taste signal (read-only).")
+        print(f"Token saved to {spotify.token_path(settings, args.label)}")
+
+    print(f"Registered MCP servers in {_register_mcp_servers(settings)}")
+    return 0
+
+
+def cmd_mcp(args: argparse.Namespace) -> int:
+    # stdout is the protocol channel from here on - nothing else may print.
+    if args.server == "google":
+        from .servers import google as server
+    elif args.server == "microsoft":
+        from .servers import microsoft as server
+    else:
+        from .servers import spotify as server
+
+    server.main()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="qm", description="Quartermaster")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -261,6 +358,19 @@ def main(argv: list[str] | None = None) -> int:
     p_mute.add_argument("--summary", help="human-readable label")
     p_mute.add_argument("--reason", help="why, for future reference")
     p_mute.set_defaults(func=cmd_mute)
+
+    p_auth = sub.add_parser("auth", help="authorise an integration account")
+    p_auth.add_argument("service", choices=["google", "microsoft", "spotify"])
+    p_auth.add_argument("label", help="your name for this account, e.g. personal or school")
+    p_auth.add_argument(
+        "--only", nargs="+", choices=["calendar", "gmail"],
+        help="google only: request just these services (default: both; you can also untick one in the browser)",
+    )
+    p_auth.set_defaults(func=cmd_auth)
+
+    p_mcp = sub.add_parser("mcp", help="run an MCP server over stdio (started by Claude, not you)")
+    p_mcp.add_argument("server", choices=["google", "microsoft", "spotify"])
+    p_mcp.set_defaults(func=cmd_mcp)
 
     args = parser.parse_args(argv)
     return int(args.func(args) or 0)

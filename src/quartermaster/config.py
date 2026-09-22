@@ -81,6 +81,12 @@ class Settings:
     notion_claude_page_id: str | None
     discord_bot_token: str | None
     discord_owner_id: int | None
+    google_client_id: str | None = None
+    google_client_secret: str | None = None
+    microsoft_client_id: str | None = None
+    microsoft_tenant_id: str = "consumers"
+    spotify_client_id: str | None = None
+    spotify_client_secret: str | None = None
     prefs: dict = field(default_factory=dict)
 
     # --- Vault paths. Everything else asks here rather than joining strings. ---
@@ -120,6 +126,24 @@ class Settings:
     @property
     def db_path(self) -> Path:
         return self.system_dir / "state.db"
+
+    @property
+    def tokens_dir(self) -> Path:
+        """OAuth tokens. In the per-user config directory, outside both repos:
+        a refresh token grants a whole inbox and belongs in neither."""
+        from platformdirs import user_config_path
+
+        return user_config_path("quartermaster", appauthor=False) / "tokens"
+
+    @property
+    def log_path(self) -> Path:
+        """Where every tool call, moderation action and turn outcome is
+        written - durable, not just whatever console happens to be attached
+        when the bot is backgrounded. Per-user, outside both repos, same
+        family as tokens_dir."""
+        from platformdirs import user_log_path
+
+        return user_log_path("quartermaster", appauthor=False) / "quartermaster.log"
 
     @property
     def public_workspace(self) -> Path:
@@ -171,5 +195,11 @@ def load_settings(vault_override: Path | None = None) -> Settings:
         notion_claude_page_id=os.getenv("NOTION_CLAUDE_PAGE_ID") or None,
         discord_bot_token=os.getenv("DISCORD_BOT_TOKEN") or None,
         discord_owner_id=int(owner_raw) if owner_raw.isdigit() else None,
+        google_client_id=os.getenv("GOOGLE_CLIENT_ID") or None,
+        google_client_secret=os.getenv("GOOGLE_CLIENT_SECRET") or None,
+        microsoft_client_id=os.getenv("MS_CLIENT_ID") or None,
+        microsoft_tenant_id=os.getenv("MS_TENANT_ID") or "consumers",
+        spotify_client_id=os.getenv("SPOTIFY_CLIENT_ID") or None,
+        spotify_client_secret=os.getenv("SPOTIFY_CLIENT_SECRET") or None,
         prefs=prefs,
     )
