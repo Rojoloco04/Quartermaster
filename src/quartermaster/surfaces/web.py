@@ -369,11 +369,17 @@ def _e(value: object) -> str:
     return html.escape(str(value))
 
 
+# One nav for every page, the standalone architecture page included (it is
+# served with its own copy swapped for this one, so the two can't drift).
+NAV = ('<nav><a href="/">Dashboard</a><a href="/chat">Chat</a><a href="/brain">Brain</a>'
+       '<a href="/settings">Settings</a><a href="/architecture">Architecture</a><a href="/guide">Guide</a></nav>')
+
+
 def page(title: str, body: str, script: str = "", css: str = "", csrf: str = "") -> str:
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>{_e(title)}</title>
-<meta name="qm-csrf" content="{_e(csrf)}"><style>{CSS}{css}</style></head><body><header><h1>Quartermaster</h1><nav>
-<a href="/">Dashboard</a><a href="/chat">Chat</a><a href="/brain">Brain</a><a href="/settings">Settings</a><a href="/architecture">Architecture</a><a href="/guide">Guide</a></nav></header><main>{body}</main>
+<meta name="qm-csrf" content="{_e(csrf)}"><style>{CSS}{css}</style></head><body><header><h1>Quartermaster</h1>
+{NAV}</header><main>{body}</main>
 <script>{script}</script></body></html>"""
 
 
@@ -719,7 +725,7 @@ def build_app(settings: Settings, token: str | None = None, hosts: tuple[str, ..
         path = REPO_ROOT / "docs" / "architecture.html"
         if not path.exists():
             return PlainTextResponse("docs/architecture.html is missing.", status_code=404)
-        return HTMLResponse(path.read_text("utf-8"))
+        return HTMLResponse(re.sub(r"<nav>.*?</nav>", lambda _: NAV, path.read_text("utf-8"), count=1, flags=re.S))
 
     def graph() -> dict:
         _, log_text = read_log_from(settings.log_path, -TAIL_BYTES)

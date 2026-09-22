@@ -151,9 +151,10 @@ def test_unexpected_host_is_refused(vault, tmp_path, monkeypatch):
     assert rebound.get("/settings").status_code == 400
 
 
-def test_architecture_page_is_served(client):
+def test_architecture_page_is_served_with_the_shared_nav(client):
     html = client.get("/architecture").text
     assert "How Quartermaster fits together" in html and "check_tool" in html
+    assert web.NAV in html and html.count("<nav>") == 1
 
 
 def test_brain_panel_can_edit_facts_not_the_mirror(client):
