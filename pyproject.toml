@@ -20,6 +20,7 @@ integrations = [
     "google-auth-oauthlib>=1.2",
     "msal>=1.28",
     "spotipy>=2.24",
+    "mcp>=2.2",  # servers/ - also pulled in by claude-agent-sdk, but imported directly
 ]
 dev = ["pytest>=8.2", "pytest-asyncio>=0.23"]
 

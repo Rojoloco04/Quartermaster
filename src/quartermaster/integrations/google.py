@@ -25,13 +25,12 @@ from pathlib import Path
 from typing import Any
 
 from ..config import Settings
+from . import accounts as _acct
 
 SERVICE_SCOPES = {
     "calendar": "https://www.googleapis.com/auth/calendar",
     "gmail": "https://www.googleapis.com/auth/gmail.readonly",
 }
-
-_LABEL = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
 # Long enough to answer "what did that email say", short enough that one
 # newsletter cannot flood the context.
@@ -46,18 +45,11 @@ class GoogleError(RuntimeError):
 
 
 def token_path(settings: Settings, label: str) -> Path:
-    if not _LABEL.match(label):
-        raise GoogleError(
-            f"Account label {label!r} must be lowercase letters, digits, - or _ (max 32)."
-        )
-    return settings.tokens_dir / f"google-{label}.json"
+    return _acct.token_path(settings, "google", label, GoogleError)
 
 
 def accounts(settings: Settings) -> list[str]:
-    """Labels of every authorised account, in a stable order."""
-    if not settings.tokens_dir.exists():
-        return []
-    return sorted(p.stem.removeprefix("google-") for p in settings.tokens_dir.glob("google-*.json"))
+    return _acct.accounts(settings, "google")
 
 
 def _client_config(settings: Settings) -> dict:
@@ -75,7 +67,7 @@ def _client_config(settings: Settings) -> dict:
 
 def authorize(
     settings: Settings, label: str, services: list[str] | None = None
-) -> tuple[str, list[str]]:
+) -> str:
     """Run the browser consent flow for one account and save its token.
 
     Google's consent screen lets the person untick any permission, so what was
@@ -83,7 +75,7 @@ def authorize(
     error: the token is saved with the granted scopes and the account serves
     only those services.
 
-    Returns (email, granted services) so the caller can confirm the right
+    Returns "email (granted services)" so the caller can confirm the right
     account was picked in the browser.
     """
     import os
@@ -124,7 +116,7 @@ def authorize(
     else:
         # The primary calendar's id is the account's address.
         email = _calendar(creds).calendars().get(calendarId="primary").execute().get("id", "?")
-    return email, services_of(granted)
+    return f"{email} ({', '.join(services_of(granted))})"
 
 
 def granted_scopes(token: dict) -> list[str]:
@@ -156,13 +148,7 @@ def _credentials(settings: Settings, label: str):
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
 
-    path = token_path(settings, label)
-    if not path.exists():
-        known = ", ".join(accounts(settings)) or "none"
-        raise GoogleError(
-            f"No Google account called {label!r} (authorised: {known}). "
-            f"Run: qm auth google {label}"
-        )
+    path = _acct.existing_token(settings, "google", label, GoogleError)
     # No scopes argument: use the ones saved with the token, i.e. what was granted.
     creds = Credentials.from_authorized_user_info(json.loads(path.read_text("utf-8")))
     if not creds.valid:

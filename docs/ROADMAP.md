@@ -5,104 +5,22 @@ what exists and why it looks the way it does, see `HANDOFF.md`.
 
 | Phase | What | State |
 | --- | --- | --- |
-| 1 | Vault + Notion mirror | Done — daily schedule not yet wired |
+| 1 | Vault + Notion mirror | Done — synced daily by Task Scheduler |
 | 2 | Discord assistant + moderation | Done |
-| 3 | Integrations | **Next** |
-| 4 | Weekly digest | Planned |
-| 5 | Infra | Planned |
+| 3 | Integrations | Done |
+| 4 | Weekly digest | Done — running daily as a proof of concept |
+| 5 | Infra | **Next** |
 | 6–10 | Extensions | Planned |
 | — | Added after the original plan | See the end |
 
----
+Phases 1–4 are described as built in `HANDOFF.md`, including where the build
+deviated from the plan (the wishlist is a Notion page, not a database).
 
-## Phase 3 — Integrations
-
-The groundwork the digest needs. Each exposed as an MCP server so the assistant
-can answer on demand, not only in the digest.
-
-- **Google Calendar** — read/write, multiple calendars, OAuth desktop flow.
-- **Gmail** — **two inboxes**, read-only. Two token files, one per account.
-- **Microsoft To Do** — via Microsoft Graph (`/me/todo/lists`). Needs a free Azure
-  app registration, tenant `consumers`.
-- **Spotify** — OAuth. Supplies taste signal for the events section.
-
-*Done when:* it answers correctly about the calendar and the To Do list.
-
----
-
-## Phase 4 — The weekly digest
-
-The flagship. **Sunday evening, Discord DM.** Collectors are plain Python and do no
-reasoning — they fetch, normalise, and hand structured data to the Agent SDK, which
-writes the prose. Roughly one model call a week.
-
-| Section | Source | Notes |
-| --- | --- | --- |
-| Week ahead | Google Calendar | Next 7 days |
-| Events | Ticketmaster Discovery + Spotify | All categories, filtered against `facts/interests.md` |
-| Price drops | Notion wishlist database | Generic structured-data extraction |
-| Gone stale | Notion mirror | Untouched 90+ days **and** looks unfinished |
-
-**Deliberately excluded:** deadline reminders, bills, weather. The owner gets those
-elsewhere, and a digest that nags gets muted.
-
-### Events
-
-- Ticketmaster Discovery API, free tier (5,000 calls/day, 5 req/s).
-- Use `geoPoint` (a geohash — `latlong` is deprecated) plus `radius` centred on the
-  home location. Not a maintained list of cities: a radius picks up every metro in
-  range for free.
-- Query in **three distance bands**. That sets the bar for inclusion *and* keeps each
-  query under the API's hard 1,000-result deep-paging cap (`size * page < 1000`),
-  which a single 500-mile, one-week query would exceed.
-
-  | Band | Bar | Meaning |
-  | --- | --- | --- |
-  | 0–60 mi | Low | A weeknight |
-  | 60–250 mi | Medium | A day trip |
-  | 250–500 mi | High | Worth a weekend |
-
-  Band definitions already live in `vault-template/90-System/config.toml`.
-- Spotify covers taste-matching for music; Claude filters everything else against
-  the interest profile.
-
-### Presales — a separate same-day ping, not a digest line
-
-A Sunday message is useless for tickets that sold out on Thursday. Uses
-`onsaleStartDateTime` from the same collector. Muteable per artist.
-
-### Price checks
-
-- The wishlist is a **Notion database** of product URLs, which the owner already
-  maintains. No separate list.
-- **Generic structured-data extraction only** — most retailers embed
-  machine-readable product data (JSON-LD `Product` / `offers.price`). No
-  per-retailer parsers to maintain.
-- Sites that yield nothing — Amazon among them — report **"couldn't check"**. Never
-  silently "no change". `db.latest_price()` already excludes failed checks so a
-  network error can't manufacture a price drop.
-- History in `state.db.price_history`.
-
-### Interest profile
-
-Seeded from the Notion mirror, Spotify, and an import of the owner's Claude.ai chat
-memories. Written to `facts/interests.md` (hand-editable; a line written by hand
-outranks anything inferred), then refined by reactions to recommendations.
-
-### Stale pages
-
-Untouched 90+ days *and* looking unfinished — empty sections, open checkboxes,
-stubs. Reference pages written once and never needing edits are not stale.
-Threshold in config.
-
-### The mute rule applies to every section
-
-Every item carries a stable ID. It keeps surfacing until the owner says stop, then
-never again. `mutes.py` already implements this, including scope nesting — muting
-`event:artist/X` silences every show by X.
-
-*Done when:* a digest lands on Sunday and the owner would have missed something
-without it.
+Still open from Phase 4:
+- **Interest profile** — seed `facts/interests.md` from the Notion mirror,
+  Spotify and an import of the owner's Claude.ai chat memories; a hand-written
+  line outranks anything inferred. Refine from reactions to recommendations.
+- **Switch the digest to weekly** (Sunday) once the daily output looks right.
 
 ---
 
@@ -111,7 +29,6 @@ without it.
 - **Service registration** so the bot survives reboot — and so instances stop
   stacking. Today, restarting by hand can leave two bots connected, which
   double-replies. This is the real fix.
-- **Scheduled Notion sync** (daily).
 - **Scheduled push** of the vault to its private remote.
 - **restic** nightly to a second drive, **with a verified test restore**.
 - **Uptime Kuma** watching the bot and the scheduled jobs.
@@ -204,6 +121,9 @@ Streaming with NVENC hardware transcoding.
   subscription limits.
 - **Voice playback** — needs `PyNaCl` and ffmpeg. The bot currently logs a warning
   that voice is unsupported. Voice *moderation* already works; it is a different API.
+- **A Notion write path for the agent's own `claude` page.** Planned originally,
+  never built; today the agent can only propose changes in `pending.md`. If
+  added, scope it to that one page id in code, not by prompt.
 - **Persistent voice-mute timers.** "Mute for 30s" is scheduled in memory today, so a
   restart leaves the person muted. Move pending undos into `state.db`.
 

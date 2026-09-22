@@ -26,16 +26,22 @@ bar = "medium"           # KC, Indy, Memphis, Louisville, Nashville
 name = "weekend"
 min_miles = 250
 max_miles = 500
-bar = "high"             # Chicago, Cincinnati, Milwaukee, Tulsa
+bar = "high"              # Chicago, Cincinnati, Milwaukee, Tulsa
+
+[events]
+window_days = 60          # how far ahead to look for events worth travelling to
 
 [notion]
-stale_after_days = 90    # must ALSO look unfinished to count as stale
+stale_after_days = 90     # must ALSO look unfinished to count as stale
+
+[wishlist]
+# Paste the wishlist page's id here (from its Notion URL - the 32-char
+# string before the "?"). A plain page you edit by hand - not a database.
+# An item is price-checked once it has a link: a bookmark block, or a
+# hyperlink on a to-do/bulleted line. Leave blank to skip price checks.
+page_id = ""
 
 [digest]
 weekday = "sunday"
 hour = 18
 calendar_days_ahead = 7
-
-[quiet_hours]
-start = 22
-end = 8

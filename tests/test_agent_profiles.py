@@ -37,7 +37,6 @@ def settings(tmp_path: Path) -> Settings:
         vault=tmp_path / "Vault",
         claude_cli=None,
         notion_token="x",
-        notion_claude_page_id=None,
         discord_bot_token="x",
         discord_owner_id=123,
         prefs={},
@@ -211,3 +210,45 @@ class TestSplitMessage:
         rejoined = " ".join(split_message(text, limit=500)).replace("\n", " ")
         for i in range(30):
             assert f"Paragraph {i}" in rejoined
+
+
+class TestToolGuard:
+    """The PreToolUse hook: the one check that looks at a tool's arguments."""
+
+    def test_unapproved_tools_are_refused_for_every_profile(self, settings: Settings):
+        # The CLI also loads the account's claude.ai connectors; none belong here.
+        for profile in (owner_profile(settings), public_profile(settings), parser_profile(settings, {})):
+            assert agent.check_tool(profile, "mcp__claude_ai_Gmail__send_message", {})
+            assert agent.check_tool(profile, "Bash", {"command": "whoami"})
+        assert agent.check_tool(parser_profile(settings, {}), "Read", {"file_path": "x.md"})
+
+    def test_owner_integrations_pass_by_server_prefix(self, settings: Settings):
+        assert agent.check_tool(owner_profile(settings), "mcp__google__list_events", {}) is None
+
+    def test_owner_may_write_notes_in_the_vault(self, settings: Settings):
+        owner = owner_profile(settings)
+        assert agent.check_tool(owner, "Write", {"file_path": str(settings.vault / "inbox" / "a.md")}) is None
+        assert agent.check_tool(owner, "Edit", {"file_path": "facts/interests.md"}) is None
+
+    def test_file_tools_stay_inside_the_vault(self, settings: Settings, tmp_path: Path):
+        owner = owner_profile(settings)
+        assert agent.check_tool(owner, "Read", {"file_path": str(tmp_path / ".env")})
+        assert agent.check_tool(owner, "Write", {"file_path": "../escape.md"})
+        assert agent.check_tool(owner, "Grep", {"path": str(tmp_path)})
+
+    def test_owner_may_not_write_what_runs_code_later(self, settings: Settings):
+        # A prompt injection that edits these gets code execution on the next run.
+        owner = owner_profile(settings)
+        for path in (".mcp.json", ".claude/settings.json", ".git/hooks/pre-commit"):
+            assert agent.check_tool(owner, "Write", {"file_path": path}), path
+            assert agent.check_tool(owner, "Edit", {"file_path": str(settings.vault / path)}), path
+        assert agent.check_tool(owner, "Read", {"file_path": ".mcp.json"}) is None
+
+    def test_options_deny_anything_not_preapproved(self, settings: Settings):
+        opts = _options(owner_profile(settings))
+        assert opts.permission_mode == "dontAsk"
+        assert opts.hooks and opts.hooks["PreToolUse"]
+
+    def test_skill_is_granted_to_the_owner_only(self, settings: Settings):
+        assert "Skill" in owner_profile(settings).allowed_tools
+        assert _options(public_profile(settings)).skills is None

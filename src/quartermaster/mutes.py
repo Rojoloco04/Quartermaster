@@ -92,8 +92,3 @@ def add(path: Path, item_id: str, summary: str = "", reason: str = "") -> bool:
     path.write_text(existing + "\n" + line + "\n", encoding="utf-8")
     return True
 
-
-def filter_unmuted(items: list[tuple[str, str]], path: Path) -> list[tuple[str, str]]:
-    """Drop muted items from a list of (item_id, summary) pairs."""
-    mutes = load(path)
-    return [(i, s) for i, s in items if not is_muted(i, mutes)]

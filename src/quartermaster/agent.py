@@ -38,6 +38,7 @@ from pathlib import Path
 from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
+    HookMatcher,
     ResultMessage,
     ServerToolResultBlock,
     ServerToolUseBlock,
@@ -52,7 +53,9 @@ from .config import Settings
 
 log = logging.getLogger(__name__)
 
-VAULT_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "TodoWrite"]
+# Skill is listed explicitly: the SDK's skills="all" would pre-approve it for
+# every profile, public and parser included.
+VAULT_TOOLS = ["Read", "Write", "Edit", "Glob", "Grep", "TodoWrite", "Skill"]
 RESEARCH_TOOLS = ["WebSearch", "WebFetch"]
 
 
@@ -63,21 +66,8 @@ def integration_servers() -> dict:
     and never picks up a different install's qm on PATH.
     """
     return {
-        "google": {
-            "type": "stdio",
-            "command": sys.executable,
-            "args": ["-m", "quartermaster.cli", "mcp", "google"],
-        },
-        "microsoft": {
-            "type": "stdio",
-            "command": sys.executable,
-            "args": ["-m", "quartermaster.cli", "mcp", "microsoft"],
-        },
-        "spotify": {
-            "type": "stdio",
-            "command": sys.executable,
-            "args": ["-m", "quartermaster.cli", "mcp", "spotify"],
-        },
+        name: {"type": "stdio", "command": sys.executable, "args": ["-m", "quartermaster.cli", "mcp", name]}
+        for name in ("google", "microsoft", "spotify")
     }
 
 
@@ -91,6 +81,13 @@ INTEGRATION_TOOLS = [f"mcp__{name}" for name in integration_servers()]
 # present and approving, so it stays available there.
 NEVER_OVER_CHAT = ["Bash", "NotebookEdit"]
 
+# File tools and the input key holding the path they touch.
+_PATH_KEYS = {"Read": "file_path", "Write": "file_path", "Edit": "file_path", "Glob": "path", "Grep": "path"}
+
+# Inside the vault, but writing here is code execution on a later run: hooks
+# and MCP servers are launched from .claude/ and .mcp.json, git hooks from .git/.
+_PROTECTED = (".claude", ".mcp.json", ".git")
+
 DISCORD_STYLE = (
     "You are replying over Discord. Keep it short - a few sentences unless asked "
     "for more. Discord supports **bold**, *italic*, `code` and lists, but not "
@@ -103,8 +100,9 @@ DISCORD_STYLE = (
 class Profile:
     """What one caller is allowed to be.
 
-    ``cwd`` and ``allowed_tools`` together are the containment. Everything else
-    is ergonomics.
+    ``cwd``, ``tools`` and ``allowed_tools`` are the containment, enforced three
+    ways: ``tools`` sets what exists, ``dontAsk`` refuses anything unapproved,
+    and ``check_tool`` confines paths. Everything else is ergonomics.
     """
 
     name: str
@@ -190,6 +188,27 @@ def parser_profile(settings: Settings, schema: dict) -> Profile:
     )
 
 
+def digest_profile(settings: Settings) -> Profile:
+    """Writes the weekly digest's prose from data collectors already gathered.
+
+    No tools: collectors are plain Python that do no reasoning, so by the time
+    this profile is asked anything it has everything it needs in the prompt.
+    ``cwd`` is still the vault so CLAUDE.md's tone rules load the normal way,
+    even though an empty ``tools`` list means nothing can actually be read.
+    Not a shared session - a weekly structured-data dump doesn't belong in the
+    thread the owner continues from the terminal.
+    """
+    return Profile(
+        name="digest",
+        cwd=settings.vault,
+        tools=[],
+        allowed_tools=[],
+        share_session=False,
+        max_turns=1,
+        system_append=DISCORD_STYLE,
+    )
+
+
 @dataclass
 class Reply:
     text: str
@@ -257,6 +276,11 @@ def pick_model(prompt: str, profile: Profile) -> str:
     if profile.name == "public":
         # Low-stakes and already contained by an empty tool list either way.
         return HAIKU
+    if profile.name == "digest":
+        # A structured data dump, not conversational text - the word-count and
+        # keyword heuristics below were built to read a chat message, not this.
+        # Fixed at Sonnet rather than guessed.
+        return SONNET
 
     word_count = len(lower.split())
     if word_count > 300 or any(signal in lower for signal in _OPUS_SIGNALS):
@@ -284,7 +308,6 @@ def _options(profile: Profile, prompt: str = "", cli_path: str | None = None) ->
         # reads. For the public profile that directory is not the vault, so none
         # of the vault's context is loaded either.
         setting_sources=["user", "project"],
-        skills="all",
         system_prompt={
             "type": "preset",
             "preset": "claude_code",
@@ -294,7 +317,11 @@ def _options(profile: Profile, prompt: str = "", cli_path: str | None = None) ->
         allowed_tools=profile.allowed_tools,
         mcp_servers=profile.mcp_servers,
         disallowed_tools=NEVER_OVER_CHAT,
-        permission_mode="acceptEdits",
+        # Anything not pre-approved is refused rather than left "ask"-able:
+        # the CLI also loads the account's claude.ai connectors (Gmail send,
+        # Drive share, Notion edit), and none of those belong to any profile.
+        permission_mode="dontAsk",
+        hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[_guard(profile)])]},
         continue_conversation=profile.share_session,
         max_turns=profile.max_turns,
         **(
@@ -303,6 +330,51 @@ def _options(profile: Profile, prompt: str = "", cli_path: str | None = None) ->
             else {}
         ),
     )
+
+
+def check_tool(profile: Profile, tool: str, tool_input: dict) -> str | None:
+    """Why this call is refused, or None if it may run.
+
+    The second line of defence behind ``tools``/``dontAsk``, and the only one
+    that looks at arguments: file tools stay inside ``profile.cwd``, and never
+    touch the files that would run code later (see ``_PROTECTED``). A prompt
+    injection in an email or web page can ask for anything; this is what it
+    runs into.
+    """
+    allowed = tool in profile.allowed_tools or any(
+        a.startswith("mcp__") and tool.startswith(a + "__") for a in profile.allowed_tools
+    )
+    if not allowed or tool in NEVER_OVER_CHAT:
+        return f"{tool} is not available to the {profile.name} profile."
+
+    key = _PATH_KEYS.get(tool)
+    if key is None or not tool_input.get(key):
+        return None  # no path given: the tool defaults to cwd
+    root = profile.cwd.resolve()
+    target = (root / str(tool_input[key])).resolve()
+    if target != root and root not in target.parents:
+        return f"{tool} is limited to {root}."
+    rel = target.relative_to(root).parts
+    if rel and rel[0] in _PROTECTED and tool not in ("Read", "Glob", "Grep"):
+        return f"{tool} may not change {rel[0]} - it controls what runs on the next start."
+    return None
+
+
+def _guard(profile: Profile):
+    async def hook(input_data: dict, tool_use_id: str | None, context: object) -> dict:
+        reason = check_tool(profile, input_data.get("tool_name", ""), input_data.get("tool_input") or {})
+        if reason is None:
+            return {}
+        log.warning("denied %s for %s: %s", input_data.get("tool_name"), profile.name, reason)
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": reason,
+            }
+        }
+
+    return hook
 
 
 def _trunc(value: object, limit: int = 300) -> str:

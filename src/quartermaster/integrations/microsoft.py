@@ -14,11 +14,11 @@ repo and the vault repo, same as Google's. MSAL manages its own cache format
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 from typing import Any
 
 from ..config import Settings
+from . import accounts as _acct
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 
@@ -27,8 +27,6 @@ GRAPH = "https://graph.microsoft.com/v1.0"
 # a refresh token without being asked; only the scope our own code cares
 # about goes in this list.
 SCOPES = ["Tasks.ReadWrite"]
-
-_LABEL = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 
 
 class MicrosoftError(RuntimeError):
@@ -39,18 +37,15 @@ class MicrosoftError(RuntimeError):
 
 
 def token_path(settings: Settings, label: str) -> Path:
-    if not _LABEL.match(label):
-        raise MicrosoftError(
-            f"Account label {label!r} must be lowercase letters, digits, - or _ (max 32)."
-        )
-    return settings.tokens_dir / f"microsoft-{label}.json"
+    return _acct.token_path(settings, "microsoft", label, MicrosoftError)
 
 
 def accounts(settings: Settings) -> list[str]:
-    """Labels of every authorised account, in a stable order."""
-    if not settings.tokens_dir.exists():
-        return []
-    return sorted(p.stem.removeprefix("microsoft-") for p in settings.tokens_dir.glob("microsoft-*.json"))
+    return _acct.accounts(settings, "microsoft")
+
+
+def resolve_account(settings: Settings, account: str | None) -> str:
+    return _acct.resolve_one(settings, "microsoft", account, MicrosoftError)
 
 
 def _cache(path: Path):
@@ -100,13 +95,7 @@ def authorize(settings: Settings, label: str) -> str:
 
 def _access_token(settings: Settings, label: str) -> str:
     """A valid access token for one account, refreshing silently if needed."""
-    path = token_path(settings, label)
-    if not path.exists():
-        known = ", ".join(accounts(settings)) or "none"
-        raise MicrosoftError(
-            f"No Microsoft account called {label!r} (authorised: {known}). "
-            f"Run: qm auth microsoft {label}"
-        )
+    path = _acct.existing_token(settings, "microsoft", label, MicrosoftError)
     cache = _cache(path)
     app = _app(settings, cache)
     account = next(iter(app.get_accounts()), None)
@@ -118,20 +107,6 @@ def _access_token(settings: Settings, label: str) -> str:
     if not result or "access_token" not in result:
         raise MicrosoftError(f"The {label!r} token was refused. Re-authorise with: qm auth microsoft {label}")
     return result["access_token"]
-
-
-def resolve_account(settings: Settings, account: str | None) -> str:
-    """One named account, or the only one, when there's no ambiguity."""
-    known = accounts(settings)
-    if not known:
-        raise MicrosoftError("No Microsoft accounts are authorised yet. Run: qm auth microsoft <label>")
-    if account:
-        if account not in known:
-            raise MicrosoftError(f"No Microsoft account called {account!r}. Authorised: {', '.join(known)}.")
-        return account
-    if len(known) > 1:
-        raise MicrosoftError(f"Say which account: {', '.join(known)}.")
-    return known[0]
 
 
 # --- Graph calls ----------------------------------------------------------------

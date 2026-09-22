@@ -41,19 +41,26 @@ DEFAULTS: dict = {
             {"name": "day_trip", "min_miles": 60, "max_miles": 250, "bar": "medium"},
             {"name": "weekend", "min_miles": 250, "max_miles": 500, "bar": "high"},
         ],
+        # How far ahead to look for events worth travelling to. Longer than
+        # the calendar window on purpose - a show worth planning a trip
+        # around is usually booked weeks out, not found seven days ahead.
+        "window_days": 60,
     },
     "notion": {
         # A page must be untouched this long AND look unfinished to be called stale.
         "stale_after_days": 90,
     },
+    "wishlist": {
+        # The Notion page id (from its URL) whose to-do/bulleted/bookmark
+        # items get price-checked. A plain hand-edited page, not a database -
+        # an item is checked once it has a link, whether that's a bookmark
+        # block or a hyperlink on a checklist line. Blank skips price checks.
+        "page_id": "",
+    },
     "digest": {
         "weekday": "sunday",
         "hour": 18,
         "calendar_days_ahead": 7,
-    },
-    "quiet_hours": {
-        "start": 22,
-        "end": 8,
     },
 }
 
@@ -76,17 +83,18 @@ def _deep_merge(base: dict, override: dict) -> dict:
 @dataclass(frozen=True)
 class Settings:
     vault: Path
-    claude_cli: str | None
-    notion_token: str | None
-    notion_claude_page_id: str | None
-    discord_bot_token: str | None
-    discord_owner_id: int | None
+    claude_cli: str | None = None
+    notion_token: str | None = None
+    discord_bot_token: str | None = None
+    discord_owner_id: int | None = None
     google_client_id: str | None = None
     google_client_secret: str | None = None
     microsoft_client_id: str | None = None
     microsoft_tenant_id: str = "consumers"
     spotify_client_id: str | None = None
     spotify_client_secret: str | None = None
+    ticketmaster_api_key: str | None = None
+    klipy_api_key: str | None = None
     prefs: dict = field(default_factory=dict)
 
     # --- Vault paths. Everything else asks here rather than joining strings. ---
@@ -94,10 +102,6 @@ class Settings:
     @property
     def facts_dir(self) -> Path:
         return self.vault / "facts"
-
-    @property
-    def inbox_dir(self) -> Path:
-        return self.vault / "inbox"
 
     @property
     def notion_dir(self) -> Path:
@@ -114,14 +118,6 @@ class Settings:
     @property
     def muted_file(self) -> Path:
         return self.system_dir / "muted.md"
-
-    @property
-    def pending_file(self) -> Path:
-        return self.system_dir / "pending.md"
-
-    @property
-    def config_file(self) -> Path:
-        return self.system_dir / "config.toml"
 
     @property
     def db_path(self) -> Path:
@@ -192,7 +188,6 @@ def load_settings(vault_override: Path | None = None) -> Settings:
         vault=vault,
         claude_cli=os.getenv("QM_CLAUDE_CLI") or None,
         notion_token=os.getenv("NOTION_TOKEN") or None,
-        notion_claude_page_id=os.getenv("NOTION_CLAUDE_PAGE_ID") or None,
         discord_bot_token=os.getenv("DISCORD_BOT_TOKEN") or None,
         discord_owner_id=int(owner_raw) if owner_raw.isdigit() else None,
         google_client_id=os.getenv("GOOGLE_CLIENT_ID") or None,
@@ -201,5 +196,7 @@ def load_settings(vault_override: Path | None = None) -> Settings:
         microsoft_tenant_id=os.getenv("MS_TENANT_ID") or "consumers",
         spotify_client_id=os.getenv("SPOTIFY_CLIENT_ID") or None,
         spotify_client_secret=os.getenv("SPOTIFY_CLIENT_SECRET") or None,
+        ticketmaster_api_key=os.getenv("TICKETMASTER_API_KEY") or None,
+        klipy_api_key=os.getenv("KLIPY_API_KEY") or None,
         prefs=prefs,
     )

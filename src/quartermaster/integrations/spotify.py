@@ -3,7 +3,7 @@
 One account, one cached token file, in the same per-user tokens directory as
 Google's and Microsoft's. Read-only scopes by design - this app never
 manages playlists or controls playback, it only reads what the owner
-listens to so the (not-yet-built) events digest can tell a show worth
+listens to so the events digest can tell a show worth
 travelling for from one that isn't.
 
 Spotify's redirect URI has to match the app dashboard exactly (no wildcard
@@ -13,10 +13,10 @@ register REDIRECT_URI verbatim in the Spotify Developer Dashboard.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from ..config import Settings
+from . import accounts as _acct
 
 # Exact match required in the Spotify Developer Dashboard - Settings ->
 # Redirect URIs. Not a real endpoint; spotipy runs a local server on this
@@ -28,7 +28,6 @@ REDIRECT_URI = "http://127.0.0.1:8765/callback"
 # writes to the account.
 SCOPES = "user-top-read user-library-read"
 
-_LABEL = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 _TIME_RANGES = {"short_term", "medium_term", "long_term"}
 
 
@@ -40,18 +39,15 @@ class SpotifyError(RuntimeError):
 
 
 def token_path(settings: Settings, label: str) -> Path:
-    if not _LABEL.match(label):
-        raise SpotifyError(
-            f"Account label {label!r} must be lowercase letters, digits, - or _ (max 32)."
-        )
-    return settings.tokens_dir / f"spotify-{label}.json"
+    return _acct.token_path(settings, "spotify", label, SpotifyError)
 
 
 def accounts(settings: Settings) -> list[str]:
-    """Labels of every authorised account, in a stable order."""
-    if not settings.tokens_dir.exists():
-        return []
-    return sorted(p.stem.removeprefix("spotify-") for p in settings.tokens_dir.glob("spotify-*.json"))
+    return _acct.accounts(settings, "spotify")
+
+
+def resolve_account(settings: Settings, account: str | None) -> str:
+    return _acct.resolve_one(settings, "spotify", account, SpotifyError)
 
 
 def _auth_manager(settings: Settings, label: str, *, open_browser: bool):
@@ -93,32 +89,12 @@ def authorize(settings: Settings, label: str) -> str:
 def _client(settings: Settings, label: str):
     from spotipy import Spotify
 
-    path = token_path(settings, label)
-    if not path.exists():
-        known = ", ".join(accounts(settings)) or "none"
-        raise SpotifyError(
-            f"No Spotify account called {label!r} (authorised: {known}). "
-            f"Run: qm auth spotify {label}"
-        )
+    _acct.existing_token(settings, "spotify", label, SpotifyError)
     # open_browser=False: a read call must never pop a browser window on its
     # own. If the cached token is unusable, this raises instead - the error
     # path below turns that into "re-authorise", not a surprise popup.
     auth_manager = _auth_manager(settings, label, open_browser=False)
     return Spotify(auth_manager=auth_manager)
-
-
-def resolve_account(settings: Settings, account: str | None) -> str:
-    """One named account, or the only one, when there's no ambiguity."""
-    known = accounts(settings)
-    if not known:
-        raise SpotifyError("No Spotify accounts are authorised yet. Run: qm auth spotify <label>")
-    if account:
-        if account not in known:
-            raise SpotifyError(f"No Spotify account called {account!r}. Authorised: {', '.join(known)}.")
-        return account
-    if len(known) > 1:
-        raise SpotifyError(f"Say which account: {', '.join(known)}.")
-    return known[0]
 
 
 def _time_range(value: str) -> str:

@@ -25,7 +25,7 @@ def b64(text: str) -> str:
 def settings(tmp_path: Path, monkeypatch) -> Settings:
     s = Settings(
         vault=tmp_path / "Vault", claude_cli=None, notion_token=None,
-        notion_claude_page_id=None, discord_bot_token=None, discord_owner_id=None,
+        discord_bot_token=None, discord_owner_id=None,
     )
     monkeypatch.setattr(Settings, "tokens_dir", property(lambda self: tmp_path / "tokens"))
     return s

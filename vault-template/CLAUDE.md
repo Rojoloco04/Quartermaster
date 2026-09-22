@@ -18,8 +18,7 @@ workspace. If something in Notion needs changing, see rule 2.
 
 **2. Notion is theirs, not yours.**
 Read it freely. To change anything, append a proposal to `90-System/pending.md`
-and say so — do not edit Notion directly. The single exception is the page named
-`claude`, which is yours: write anything there you think they'll want later.
+and say so — you have no way to edit Notion, and that is deliberate.
 
 **3. Say where you learned things.**
 When you report something from the vault, name the file. "Your Notion page on X

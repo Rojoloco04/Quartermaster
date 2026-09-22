@@ -1,8 +1,8 @@
 """Notion REST client.
 
-Notion is the source of truth for the user's knowledge, todos and wishlists. This
-client only reads (plus one narrow write path for the `claude` page); every
-other change goes through 90-System/pending.md for approval.
+Notion is the source of truth for the user's knowledge, todos and wishlists.
+This client only reads; changes are proposed in 90-System/pending.md and made
+by the owner.
 
 The important find here is ``GET /v1/pages/{id}/markdown``: a first-class REST
 endpoint that returns a page as markdown. It means the mirror is a
@@ -109,24 +109,27 @@ class NotionClient:
                 return
             cursor = data.get("next_cursor")
 
+    def retrieve_block_children(self, block_id: str) -> Iterator[dict]:
+        """Every direct child block of a page or block, in order."""
+        cursor: str | None = None
+        while True:
+            params: dict[str, Any] = {"page_size": 100}
+            if cursor:
+                params["start_cursor"] = cursor
+
+            data = self._request("GET", f"/blocks/{block_id}/children", params=params)
+            yield from data.get("results", [])
+
+            if not data.get("has_more"):
+                return
+            cursor = data.get("next_cursor")
+
     def page_markdown(self, page_id: str) -> PageMarkdown:
         data = self._request("GET", f"/pages/{page_id}/markdown")
         return PageMarkdown(
             markdown=extract_markdown(data),
             truncated=bool(data.get("truncated")),
             unknown_block_ids=list(data.get("unknown_block_ids") or []),
-        )
-
-    def replace_page_markdown(self, page_id: str, markdown: str) -> None:
-        """Overwrite a page's content.
-
-        Only ever called for the `claude` page. Every other write is a proposal
-        in 90-System/pending.md until the user approves it.
-        """
-        self._request(
-            "PATCH",
-            f"/pages/{page_id}/markdown",
-            json={"replace_content": markdown},
         )
 
 

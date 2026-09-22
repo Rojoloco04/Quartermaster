@@ -125,6 +125,52 @@ def record_surfaced(conn: sqlite3.Connection, item_id: str, kind: str, summary: 
     return int(row["times_shown"])
 
 
+def record_price_check(
+    conn: sqlite3.Connection,
+    url: str,
+    item_name: str,
+    price_cents: int | None,
+    currency: str,
+    ok: bool,
+    note: str = "",
+) -> None:
+    """Append one price observation. Always append, never overwrite - the
+    history is the point, and `latest_price` already knows to ignore failures."""
+    conn.execute(
+        """
+        INSERT INTO price_history (url, item_name, price_cents, currency, ok, note, checked_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (url, item_name, price_cents, currency, 1 if ok else 0, note, utcnow()),
+    )
+
+
+def record_event_seen(
+    conn: sqlite3.Connection, event_id: str, name: str, starts_at: str, band: str, venue: str
+) -> None:
+    """Log an event the digest has surfaced. ON CONFLICT does nothing rather
+    than updating, so `first_seen` stays the first time this show was found -
+    the only fact this table exists to keep."""
+    conn.execute(
+        """
+        INSERT INTO events_seen (event_id, name, starts_at, band, venue, first_seen)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(event_id) DO NOTHING
+        """,
+        (event_id, name, starts_at, band, venue, utcnow()),
+    )
+
+
+def shown_count(conn: sqlite3.Connection, item_id: str) -> int:
+    """How many times an item has been shown, without recording a new one.
+
+    Used by a dry run: it needs the same "mentioned before" context a real
+    run would use for tone, but must not itself count as a showing.
+    """
+    row = conn.execute("SELECT times_shown FROM surfaced WHERE item_id = ?", (item_id,)).fetchone()
+    return int(row["times_shown"]) if row else 0
+
+
 def latest_price(conn: sqlite3.Connection, url: str) -> sqlite3.Row | None:
     """Most recent *successful* check for a url.
 
@@ -135,7 +181,7 @@ def latest_price(conn: sqlite3.Connection, url: str) -> sqlite3.Row | None:
         """
         SELECT * FROM price_history
         WHERE url = ? AND ok = 1
-        ORDER BY checked_at DESC
+        ORDER BY checked_at DESC, id DESC
         LIMIT 1
         """,
         (url,),

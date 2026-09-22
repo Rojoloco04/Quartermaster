@@ -51,9 +51,3 @@ def test_hand_written_content_survives(tmp_path: Path):
     assert "A note I typed myself." in path.read_text(encoding="utf-8")
     assert len(mutes.load(path)) == 2
 
-
-def test_filter_unmuted(tmp_path: Path):
-    path = tmp_path / "muted.md"
-    mutes.add(path, "price:widget")
-    items = [("price:widget", "Widget"), ("price:gadget", "Gadget")]
-    assert mutes.filter_unmuted(items, path) == [("price:gadget", "Gadget")]

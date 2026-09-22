@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
+from datetime import timedelta
 from typing import Any
 
 import discord
@@ -35,6 +35,15 @@ CONFIRM_TIMEOUT = 120.0
 # 2026-06-30; Klipy (run by ex-Tenor staff) kept the same params and shape.
 GIF_ENDPOINT = "https://api.klipy.com/v2/search"
 PREVIEW_SAMPLE = 5
+
+# `say` may ping the people it names, never @everyone or a role: the bot's own
+# mention permission must not stand in for an invoker who lacks it. Everything
+# else the bot sends pings nobody (the client default, see discord_bot).
+SAY_MENTIONS = discord.AllowedMentions(everyone=False, roles=False, users=True, replied_user=False)
+
+# Pending voice-mute undos. asyncio keeps only weak references to tasks, so an
+# unreferenced one can be garbage-collected before it fires.
+_undo_tasks: set[asyncio.Task] = set()
 
 
 class ConfirmView(discord.ui.View):
@@ -97,7 +106,7 @@ async def parse_request(settings: Settings, request: str) -> tuple[OpsPlan | Non
         return None, f"I couldn't turn that into an action ({exc})."
 
 
-def _who(member: discord.Member) -> str:
+def _who(member: Any) -> str:
     return f"{member} ({member.id})"
 
 
@@ -110,7 +119,8 @@ async def handle(
     """Run one moderation request end to end, in a guild channel."""
     channel = message.channel
     guild = message.guild
-    if guild is None or not isinstance(message.author, discord.Member):
+    invoker = message.author
+    if guild is None or not isinstance(invoker, discord.Member):
         await channel.send("Moderation only works inside a server.")
         return
 
@@ -120,55 +130,52 @@ async def handle(
         await channel.send(f"⚠️ {error}")
         return
 
-    bot_member = guild.me
-    check = discord_ops.check_permissions(
-        plan,
-        discord_ops.permissions_in(plan, channel, message.author),
-        discord_ops.permissions_in(plan, channel, bot_member),
-    )
-    if not check.ok:
+    async def deny(problems: list[str], target: object = None, kind: str = "denied") -> None:
         log.warning(
-            "[mod] denied: %s tried %s in #%s - %s",
-            _who(message.author), plan.action, channel, "; ".join(check.problems),
+            "[mod] %s: %s tried %s on %s in #%s - %s",
+            kind, _who(invoker), plan.action, target, channel, "; ".join(problems),
         )
-        await channel.send("❌ " + "\n".join(check.problems))
-        return
+        await channel.send("❌ " + "\n".join(problems))
 
-    target: discord.Member | None = None
+    def perms(target: object = None) -> discord_ops.PermissionCheck:
+        return discord_ops.check_permissions(
+            plan,
+            discord_ops.permissions_in(plan, channel, invoker, target),
+            discord_ops.permissions_in(plan, channel, guild.me, target),
+        )
+
+    check = perms()
+    if not check.ok:
+        return await deny(check.problems)
+
+    target: Any = None
     if plan.is_member_action:
-        target, candidates = discord_ops.resolve_member(plan.target_user or "", list(guild.members))
+        if plan.action == "unban":
+            # A banned user is no longer a member, so look in the ban list.
+            pool = [entry.user async for entry in guild.bans(limit=1000)]
+        else:
+            pool = list(guild.members)
+        target, candidates = discord_ops.resolve_member(plan.target_user or "", pool)
         if target is None:
             if candidates:
                 names = ", ".join(f"`{m}`" for m in candidates[:6])
                 await channel.send(f"❓ `{plan.target_user}` is ambiguous — did you mean: {names}?")
             else:
-                await channel.send(f"❓ I couldn't find `{plan.target_user}` in this server.")
+                where = "on the ban list" if plan.action == "unban" else "in this server"
+                await channel.send(f"❓ I couldn't find `{plan.target_user}` {where}.")
             return
 
         # The first check was guild-wide for voice actions; now that we know
         # which voice channel the target is in, its overwrites get the final say.
         if plan.action in discord_ops.VOICE_ACTIONS:
-            check = discord_ops.check_permissions(
-                plan,
-                discord_ops.permissions_in(plan, channel, message.author, target),
-                discord_ops.permissions_in(plan, channel, bot_member, target),
-            )
+            check = perms(target)
             if not check.ok:
-                log.warning(
-                    "[mod] denied: %s tried %s on %s in #%s - %s",
-                    _who(message.author), plan.action, target, channel, "; ".join(check.problems),
-                )
-                await channel.send("❌ " + "\n".join(check.problems))
-                return
+                return await deny(check.problems, target)
 
-        hierarchy = discord_ops.check_hierarchy(message.author, bot_member, target)
-        if not hierarchy.ok:
-            log.warning(
-                "[mod] denied (hierarchy): %s tried %s on %s in #%s - %s",
-                _who(message.author), plan.action, target, channel, "; ".join(hierarchy.problems),
-            )
-            await channel.send("❌ " + "\n".join(hierarchy.problems))
-            return
+        if isinstance(target, discord.Member):  # a banned User has no roles
+            hierarchy = discord_ops.check_hierarchy(invoker, guild.me, target)
+            if not hierarchy.ok:
+                return await deny(hierarchy.problems, target, "denied (hierarchy)")
 
     # --- Preview -----------------------------------------------------------
 
@@ -177,27 +184,21 @@ async def handle(
 
     # say and gif create a message rather than acting on one, so there is
     # nothing to match and "nothing matched" would be a false failure.
-    needs_target = not plan.is_member_action and plan.action not in ("say", "gif")
-
-    if needs_target:
+    if not plan.is_member_action and plan.action not in ("say", "gif"):
         replied_to = await _replied_message(message)
         if replied_to is not None:
-            # "delete that message" while replying to it is the most natural way
-            # to ask, and it is completely unambiguous - Discord tells us exactly
-            # which message you meant. Honour it instead of guessing from a
-            # history scan, which is how "that" would otherwise become "the last
-            # twenty".
+            # "delete that" while replying is unambiguous - Discord tells us
+            # exactly which message. Honour it rather than scanning history,
+            # which is how "that" would otherwise become "the last twenty".
             matched = [replied_to]
         else:
             matcher = discord_ops.build_matcher(plan, bot_user_id=bot_user.id)
             try:
                 async for msg in channel.history(limit=max(plan.limit * 5, 100)):
-                    if msg.id == message.id:
-                        continue
-                    if matcher(msg):
+                    if msg.id != message.id and matcher(msg):
                         matched.append(msg)
-                    if len(matched) >= plan.limit:
-                        break
+                        if len(matched) >= plan.limit:
+                            break
             except discord.Forbidden:
                 await channel.send("❌ I can't read this channel's history.")
                 return
@@ -216,69 +217,48 @@ async def handle(
         await channel.send(summary)
         return
 
-    # Only irreversible actions are worth interrupting for. Reacting, posting a
-    # message or a gif adds to the channel rather than removing from it, and
-    # undoing one is trivial — a confirmation step there is pure friction.
-    if not plan.is_destructive:
+    async def execute() -> str:
         try:
-            result = await _execute(plan, channel, target, matched, message.author)
+            result = await _execute(plan, channel, target, matched, invoker, settings)
         except discord.Forbidden as exc:
             result = f"❌ Discord refused: {exc.text or exc}"
         except discord.HTTPException as exc:
             result = f"❌ Discord error: {exc.text or exc}"
-
         log.info(
             "[mod] %s executed %s in #%s (target=%s matched=%d): %s",
-            _who(message.author), plan.action, channel, target, len(matched), result,
+            _who(invoker), plan.action, channel, target, len(matched), result,
         )
+        return result
 
+    # Only irreversible actions are worth interrupting for. Reacting, posting a
+    # message or a gif adds to the channel rather than removing from it, and
+    # undoing one is trivial — a confirmation step there is pure friction.
+    if not plan.is_destructive:
+        result = await execute()
         # A bare "Sent." reads oddly next to the thing it just sent.
-        if plan.action in ("say", "gif"):
-            if result.startswith("❌"):
-                await channel.send(result)
-        else:
+        if plan.action not in ("say", "gif") or result.startswith("❌"):
             await channel.send(result)
         return
 
-    view = ConfirmView(message.author.id)
+    view = ConfirmView(invoker.id)
     prompt_msg = await channel.send(summary, view=view)
     await view.wait()
 
     if not view.approved:
         log.info("[mod] %s cancelled %s in #%s (target=%s matched=%d)",
-                  _who(message.author), plan.action, channel, target, len(matched))
-        await prompt_msg.edit(
-            content=summary + "\n\n**Cancelled.** Nothing changed.", view=None
-        )
+                 _who(invoker), plan.action, channel, target, len(matched))
+        await prompt_msg.edit(content=summary + "\n\n**Cancelled.** Nothing changed.", view=None)
         return
 
-    # --- Execute -----------------------------------------------------------
-
-    try:
-        result = await _execute(plan, channel, target, matched, message.author)
-    except discord.Forbidden as exc:
-        result = f"❌ Discord refused: {exc.text or exc}"
-    except discord.HTTPException as exc:
-        result = f"❌ Discord error: {exc.text or exc}"
-
-    log.info(
-        "[mod] %s executed %s in #%s (target=%s matched=%d): %s",
-        _who(message.author), plan.action, channel, target, len(matched), result,
-    )
-    await prompt_msg.edit(content=summary + f"\n\n{result}", view=None)
+    await prompt_msg.edit(content=summary + f"\n\n{await execute()}", view=None)
 
 
-def _gif_key() -> str | None:
-    return os.getenv("KLIPY_API_KEY") or None
-
-
-async def _find_gif(query: str) -> str | None:
+async def _find_gif(key: str | None, query: str) -> str | None:
     """First Klipy result for a query, or None.
 
     Optional by design: no key just means gif search is unavailable, not that
     the bot fails to start.
     """
-    key = _gif_key()
     if not key or not query.strip():
         return None
 
@@ -302,8 +282,9 @@ async def _find_gif(query: str) -> str | None:
             if not results:
                 return None
             return results[0]["media_formats"]["gif"]["url"]
-    except Exception:  # noqa: BLE001 - a failed search is not a crash
-        log.exception("gif search failed")
+    except Exception as exc:  # noqa: BLE001 - a failed search is not a crash
+        # Type only: an httpx error's message can carry the request URL, key included.
+        log.warning("gif search failed: %s", type(exc).__name__)
         return None
 
 
@@ -374,6 +355,7 @@ async def _execute(
     target: Any,
     matched: list[discord.Message],
     invoker: Any,
+    settings: Settings,
 ) -> str:
     """Perform the approved plan. No model involvement past this point."""
     reason = f"Quartermaster, requested by {invoker} — {plan.reason or 'no reason given'}"[:500]
@@ -396,16 +378,16 @@ async def _execute(
     if plan.action == "say":
         if not plan.text:
             return "❌ Nothing to say."
-        await channel.send(plan.text)
+        await channel.send(plan.text, allowed_mentions=SAY_MENTIONS)
         return "✅ Sent."
 
     if plan.action == "gif":
-        url = await _find_gif(plan.query or "")
+        url = await _find_gif(settings.klipy_api_key, plan.query or "")
         if url is None:
             return (
                 "❌ GIF search needs a Klipy key. Add `KLIPY_API_KEY` to .env "
                 "(free at partner.klipy.com) and restart me."
-                if not _gif_key()
+                if not settings.klipy_api_key
                 else f"❌ Nothing found for `{plan.query}`."
             )
         await channel.send(url)
@@ -422,18 +404,16 @@ async def _execute(
         return f"✅ Deleted {deleted} message(s)."
 
     if plan.action in ("pin", "unpin"):
-        done = 0
         for msg in matched:
             await (msg.pin(reason=reason) if plan.action == "pin" else msg.unpin(reason=reason))
-            done += 1
-        return f"✅ {plan.action.capitalize()}ned {done} message(s)."
+        return f"✅ {plan.action.capitalize()}ned {len(matched)} message(s)."
 
     if plan.action == "kick":
         await target.kick(reason=reason)
         return f"✅ Kicked {target}."
 
     if plan.action == "ban":
-        await target.ban(reason=reason, delete_message_days=plan.ban_delete_days)
+        await target.ban(reason=reason, delete_message_seconds=plan.ban_delete_days * 86400)
         extra = f", deleting {plan.ban_delete_days} day(s) of messages" if plan.ban_delete_days else ""
         return f"✅ Banned {target}{extra}."
 
@@ -442,8 +422,6 @@ async def _execute(
         return f"✅ Unbanned {target}."
 
     if plan.action == "timeout":
-        from datetime import timedelta
-
         await target.timeout(timedelta(minutes=plan.timeout_minutes or 10), reason=reason)
         return f"✅ Timed out {target} for {plan.timeout_minutes or 10} min."
 
@@ -461,7 +439,9 @@ async def _execute(
 
         verb = f"{'' if on else 'un'}{field}d"
         if on and plan.duration_seconds:
-            asyncio.create_task(_undo_after(target, field, plan.duration_seconds, reason))
+            task = asyncio.create_task(_undo_after(target, field, plan.duration_seconds, reason))
+            _undo_tasks.add(task)
+            task.add_done_callback(_undo_tasks.discard)
             # Stated plainly: this timer lives in memory only.
             return (
                 f"✅ Voice {verb} {target} for {plan.duration_seconds}s. "

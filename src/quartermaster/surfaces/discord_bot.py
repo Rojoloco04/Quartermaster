@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import logging.handlers
 
 import discord
 
@@ -95,7 +94,10 @@ class Quartermaster(discord.Client):
         # still runs and the vault assistant works, moderation just turns off.
         intents.members = with_members
 
-        super().__init__(intents=intents)
+        # Nothing the bot sends pings anyone unless a call opts in (moderation's
+        # `say`). A model reply, or a preview quoting someone's message, must
+        # never become an @everyone.
+        super().__init__(intents=intents, allowed_mentions=discord.AllowedMentions.none())
         self.settings = settings
         self.moderation_enabled = with_members
         self.owner = agent.owner_profile(settings)
@@ -211,23 +213,9 @@ def run(settings: Settings | None = None) -> int:
     settings.require("discord_bot_token", "discord_owner_id")
 
     if not settings.vault.exists():
-        print(f"No vault at {settings.vault}. Run 'qm init' first.")
+        log.error("No vault at %s. Run 'qm init' first.", settings.vault)
         return 1
-
-    # Console AND a durable file - stdout disappears the moment this is
-    # backgrounded (as it always is in practice), and "check the log" has to
-    # mean something that's still there after the fact, not just whatever
-    # terminal happened to be attached when something went wrong.
-    settings.log_path.parent.mkdir(parents=True, exist_ok=True)
-    file_handler = logging.handlers.RotatingFileHandler(
-        settings.log_path, maxBytes=10_000_000, backupCount=5, encoding="utf-8"
-    )
-    log_format = "%(asctime)s %(levelname)s %(name)s: %(message)s"
-    logging.basicConfig(
-        level=logging.INFO, format=log_format,
-        handlers=[logging.StreamHandler(), file_handler],
-    )
-    log.info("logging to %s", settings.log_path)
+    log.info("logging to %s", settings.log_path)  # configured by cli.main
 
     # Try with moderation, then without. A feature nobody has switched on in the
     # portal yet must not take down the assistant that gets used every day.
@@ -238,24 +226,20 @@ def run(settings: Settings | None = None) -> int:
             return 0
         except discord.PrivilegedIntentsRequired:
             if with_members:
-                print(
-                    "\nSERVER MEMBERS INTENT is off, so moderation is unavailable.\n"
-                    "Starting without it - DMs and the vault assistant still work.\n\n"
-                    "To enable moderation: discord.com/developers/applications ->\n"
-                    "your app -> Bot -> Privileged Gateway Intents -> Server Members\n"
-                    "Intent -> Save Changes, then restart.\n"
+                log.warning(
+                    "SERVER MEMBERS INTENT is off, so moderation is unavailable. Starting "
+                    "without it - DMs still work. Enable it at discord.com/developers/"
+                    "applications -> your app -> Bot -> Privileged Gateway Intents."
                 )
                 continue
-
-            print(
-                "\nDiscord refused the connection: MESSAGE CONTENT INTENT is off.\n"
-                "Enable it at discord.com/developers/applications -> your app -> Bot\n"
-                "-> Privileged Gateway Intents -> Message Content Intent -> Save Changes.\n"
-                "Without it your messages arrive empty and the bot ignores everything."
+            log.error(
+                "Discord refused the connection: MESSAGE CONTENT INTENT is off. Enable it "
+                "at discord.com/developers/applications -> your app -> Bot -> Privileged "
+                "Gateway Intents. Without it every message arrives empty."
             )
             return 1
         except discord.LoginFailure:
-            print("\nDiscord refused the token. Check DISCORD_BOT_TOKEN in .env.")
+            log.error("Discord refused the token. Check DISCORD_BOT_TOKEN in .env.")
             return 1
         except KeyboardInterrupt:
             return 0
