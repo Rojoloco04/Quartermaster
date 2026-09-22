@@ -225,7 +225,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         subprocess.run(["git", "init", "-q"], cwd=vault, check=False)
         (vault / ".gitignore").write_text(
             "# Machine state - rebuildable, and noisy in diffs.\n"
-            "90-System/state.db\n90-System/state.db-wal\n90-System/state.db-shm\n",
+            "90-System/state.db\n90-System/state.db-wal\n90-System/state.db-shm\n90-System/turn.lock\n",
             encoding="utf-8",
         )
         print("Initialised a git repo in the vault. Add your private GitHub remote when ready.")
@@ -336,6 +336,19 @@ def cmd_quit(args: argparse.Namespace) -> int:
     stopped = procs.quit_all()
     print("Stopped: " + ", ".join(stopped) if stopped else "Nothing was running.")
     return 0
+
+
+def cmd_restart(args: argparse.Namespace) -> int:
+    from . import procs
+
+    out_dir = load_settings().log_path.parent
+    stopped, started, failed = procs.restart(out_dir)
+    print("Stopped: " + (", ".join(stopped) or "nothing was running"))
+    if started:
+        print("Started: " + ", ".join(started) + f"  (console output in {out_dir})")
+    for line in failed:
+        print("FAILED: " + line)
+    return 1 if failed else 0
 
 
 def cmd_queue(args: argparse.Namespace) -> int:
@@ -477,6 +490,9 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("quit", aliases=["stop"], help="stop every running Quartermaster process (bot, web, jobs)").set_defaults(
         func=cmd_quit
+    )
+    sub.add_parser("restart", help="restart the bot and dashboard in the background").set_defaults(
+        func=cmd_restart
     )
 
     p_queue = sub.add_parser("queue", help="list (or add to) the dev queue of code changes")

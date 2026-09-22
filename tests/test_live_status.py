@@ -1,6 +1,7 @@
 """Streaming a turn into Discord: text goes out as written, status stays last."""
 
-from quartermaster.surfaces.discord_bot import LiveStatus, describe_tool
+from quartermaster.surfaces.chat import describe_tool
+from quartermaster.surfaces.discord_bot import LiveStatus
 
 
 class FakeMessage:

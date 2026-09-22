@@ -4,7 +4,8 @@ Bot status, scheduled jobs, recent agent turns, the live shared conversation
 (Discord and terminal), a tailing log, digests, mutes, the vault drawn as a graph
 (/brain), the user guide, and /settings: every preference, the agent's
 instructions, facts, lessons, mutes and the dev queue, viewable and editable.
-Those edits are the only thing here that changes state.
+And /chat: the owner's conversation, the same session as the Discord DMs.
+Those edits and chat turns are the only things here that change state.
 
 The log and transcripts hold email snippets and DMs, so it binds to localhost.
 Binding anywhere else (a Tailscale address, say) requires ``QM_WEB_TOKEN``;
@@ -15,6 +16,7 @@ owner's browser), and a save must carry the per-run CSRF token from the page.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import html
 import json
@@ -24,13 +26,14 @@ import re
 import secrets
 import time
 import tomllib
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
-from .. import mutes, schedule
+from .. import agent, mutes, schedule
 from ..agent import transcript_dir
 from ..config import DEFAULTS, REPO_ROOT, Settings, _deep_merge
-from . import brain
+from . import brain, chat
 
 log = logging.getLogger(__name__)
 
@@ -97,7 +100,8 @@ def session_entries(folder: Path, limit: int = 40) -> tuple[str, list[dict]]:
             content = "\n".join(b.get("text", "") for b in content if b.get("type") == "text")
         if not content or not str(content).strip():
             continue  # tool calls and results: the log covers those
-        source = "discord" if str(entry.get("entrypoint", "")).startswith("sdk") else "terminal"
+        # Both the bot and the web chat run turns through the SDK.
+        source = "discord/web" if str(entry.get("entrypoint", "")).startswith("sdk") else "terminal"
         out.append({"role": entry["type"], "text": str(content).strip(),
                     "at": str(entry.get("timestamp", ""))[:19].replace("T", " "), "source": source})
     return files[-1].stem, out[-limit:]
@@ -263,7 +267,8 @@ CSS = """
           --ok:#5cc28f; --bad:#f08a80; --accent:#8fa6ff; --code:#262624; } }
 * { box-sizing:border-box } body { margin:0; background:var(--bg); color:var(--fg);
   font:14px/1.5 system-ui, sans-serif } a { color:var(--accent) }
-header { display:flex; gap:16px; align-items:baseline; padding:14px 20px; border-bottom:1px solid var(--line) }
+header { display:flex; gap:16px; align-items:baseline; padding:14px 20px; border-bottom:1px solid var(--line);
+  position:sticky; top:0; z-index:20; background:var(--bg) }
 header h1 { font-size:16px; margin:0 } nav a { margin-right:12px }
 main { max-width:1200px; margin:0 auto; padding:16px 20px; display:grid; gap:16px }
 section { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px 16px; min-width:0; overflow-x:auto }
@@ -302,7 +307,7 @@ def page(title: str, body: str, script: str = "", css: str = "", csrf: str = "")
     return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>{_e(title)}</title>
 <meta name="qm-csrf" content="{_e(csrf)}"><style>{CSS}{css}</style></head><body><header><h1>Quartermaster</h1><nav>
-<a href="/">Dashboard</a><a href="/brain">Brain</a><a href="/settings">Settings</a><a href="/architecture">Architecture</a><a href="/guide">Guide</a></nav></header><main>{body}</main>
+<a href="/">Dashboard</a><a href="/chat">Chat</a><a href="/brain">Brain</a><a href="/settings">Settings</a><a href="/architecture">Architecture</a><a href="/guide">Guide</a></nav></header><main>{body}</main>
 <script>{script}</script></body></html>"""
 
 
@@ -348,6 +353,77 @@ def dashboard(settings: Settings) -> str:
 <section><h2>Digests</h2><ul>{''.join(f'<li><a href="/digest/{_e(d.stem)}">{_e(d.stem)}</a></li>' for d in digests) or '<li class="muted">none yet</li>'}</ul></section>
 <section><h2>Muted ({len(muted)})</h2><ul>{''.join(f'<li><code>{_e(m.item_id)}</code> <span class="muted">{_e(m.note)}</span></li>' for m in muted) or '<li class="muted">nothing muted</li>'}</ul></section>
 </div>""", LOG_JS)
+
+
+CHAT_CSS = """
+#chat .msg .body { margin-top:2px } #chat .msg .body > :first-child { margin-top:0 } #chat .msg .body > :last-child { margin-bottom:0 }
+#chat .you .body { white-space:pre-wrap } #chat .err .body { color:var(--bad) } #chat .note .body { color:var(--muted) }
+#chatstatus { min-height:1.5em; margin:8px 0 } #chatform { display:flex; gap:8px; align-items:flex-end }
+#chatform textarea { flex:1; min-height:44px; max-height:240px; resize:vertical; padding:8px; font:inherit;
+  border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg) }
+#chatform button { font:inherit; padding:8px 16px; border-radius:6px; cursor:pointer; border:1px solid var(--accent);
+  background:var(--accent); color:#fff }
+"""
+
+# The reply streams back as server-sent events over the POST's own response:
+# text blocks as they're written, the current tool as a status line.
+CHAT_JS = r"""
+const QM_CSRF = document.querySelector('meta[name=qm-csrf]').content;
+const chat = document.getElementById('chat'), form = document.getElementById('chatform');
+const box = form.querySelector('textarea'), status = document.getElementById('chatstatus');
+function add(who, cls, content, isHtml) {
+  const d = document.createElement('div'); d.className = 'msg ' + cls;
+  const w = document.createElement('span'); w.className = 'who'; w.textContent = who;
+  const b = document.createElement('div'); b.className = 'body';
+  if (isHtml) b.innerHTML = content; else b.textContent = content;
+  d.append(w, b); chat.append(d); window.scrollTo(0, document.body.scrollHeight);
+}
+async function send(text) {
+  add('You', 'you', text, false);
+  let started = false;
+  try {
+    const r = await fetch('/api/chat', {method: 'POST', body: JSON.stringify({text}),
+      headers: {'Content-Type': 'application/json', 'X-QM-CSRF': QM_CSRF}});
+    if (!r.ok) { const d = await r.json().catch(() => ({})); add('Quartermaster', 'err', d.error || 'HTTP ' + r.status); return; }
+    const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '';
+    for (;;) {
+      const {value, done} = await reader.read(); if (done) break;
+      buf += dec.decode(value, {stream: true}); let i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 2);
+        if (!line.startsWith('data: ')) continue;
+        const ev = JSON.parse(line.slice(6));
+        if (ev.kind === 'start') { started = true; status.textContent = '💭 Thinking…'; }
+        else if (ev.kind === 'text') { add('Quartermaster', 'qm', ev.html, true); status.textContent = '💭 Thinking…'; }
+        else if (ev.kind === 'tool') status.textContent = '🔧 ' + ev.text + '…';
+        else add('Quartermaster', ev.kind === 'error' ? 'err' : 'note', ev.text);
+      }
+    }
+  } catch (e) { add('Quartermaster', 'err', 'Lost the connection: ' + e); }
+  finally { if (started) status.textContent = ''; }
+}
+form.addEventListener('submit', e => { e.preventDefault(); const t = box.value.trim(); if (t) { box.value = ''; send(t); } });
+box.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } });
+window.scrollTo(0, document.body.scrollHeight); box.focus();
+"""
+
+
+def chat_page(settings: Settings, csrf: str) -> str:
+    _, entries = session_entries(transcript_dir(settings.vault))
+    history = "".join(
+        f"<div class='msg {'you' if m['role'] == 'user' else 'qm'}'><span class='who'>"
+        f"{'You' if m['role'] == 'user' else 'Quartermaster'}</span> <span class='muted'>{_e(m['at'])} via {m['source']}</span>"
+        f"<div class='body'>{_e(m['text']) if m['role'] == 'user' else markdown_to_html(m['text'])}</div></div>"
+        for m in entries
+    )
+    return page("Chat", f"""
+<section><h2>Chat (the same conversation as your Discord DMs and <code>claude</code> in the vault)</h2>
+<div id="chat">{history or "<p class='muted'>No conversation yet.</p>"}</div>
+<div id="chatstatus" class="muted"></div>
+<form id="chatform"><textarea placeholder="Message Quartermaster (Enter sends, Shift+Enter for a new line)" rows="2"></textarea>
+<button type="submit">Send</button></form>
+<p class="muted">"stop" cancels a running reply, "start fresh" starts a new conversation. Notion changes it proposes
+are still confirmed in Discord.</p></section>""", CHAT_JS, CHAT_CSS, csrf)
 
 
 EDIT_CSS = """
@@ -488,7 +564,7 @@ def build_app(settings: Settings, token: str | None = None, hosts: tuple[str, ..
     from starlette.middleware import Middleware
     from starlette.middleware.trustedhost import TrustedHostMiddleware
     from starlette.requests import Request
-    from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+    from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
     from starlette.routing import Route
 
     # Per run: pages carry it, saves must send it back as a header.
@@ -561,6 +637,87 @@ def build_app(settings: Settings, token: str | None = None, hosts: tuple[str, ..
         saved = (settings.vault / rel).read_text("utf-8")
         return JSONResponse({"hash": new_hash, "html": render_file(rel, saved)})
 
+    async def chat_view(request: Request):
+        return HTMLResponse(chat_page(settings, csrf))
+
+    # The web chat's own turn, as the bot keeps its own: "stop" here cancels
+    # this one. chat.TurnLock keeps it from overlapping a Discord turn.
+    owner = agent.owner_profile(settings)
+    turn: dict = {"task": None, "fresh": False}
+
+    def events(queue: asyncio.Queue):
+        async def stream():
+            while (event := await queue.get()) is not None:
+                yield f"data: {json.dumps(event)}\n\n"
+        return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-store"})
+
+    def note(text: str):
+        queue: asyncio.Queue = asyncio.Queue()
+        queue.put_nowait({"kind": "note", "text": text})
+        queue.put_nowait(None)
+        return events(queue)
+
+    async def api_chat(request: Request):
+        if not secrets.compare_digest(request.headers.get("x-qm-csrf", ""), csrf):
+            return JSONResponse({"error": "Missing or stale page token. Reload the page."}, status_code=403)
+        try:
+            text = str((await request.json())["text"]).strip()
+        except (ValueError, KeyError, TypeError):
+            return JSONResponse({"error": "Malformed message."}, status_code=400)
+        if not text:
+            return JSONResponse({"error": "Empty message."}, status_code=400)
+
+        running = turn["task"] is not None and not turn["task"].done()
+        control = chat.session_control(text)
+        if control == "stop":
+            if running:
+                turn["task"].cancel()
+                return note("Stopping.")
+            return note("Nothing is running here.")
+        if control == "new":
+            turn["fresh"] = True
+            return note(chat.FRESH_NOTE)
+        if running:
+            return note('Still working on the last one. Say "stop" to cancel it.')
+        lock = chat.TurnLock(chat.lock_path(settings))
+        if not lock.acquire():
+            return note("Busy with a message from Discord. Try again when it's answered.")
+
+        profile = chat.continue_or_fresh(settings, owner)
+        if turn["fresh"]:
+            profile, turn["fresh"] = replace(owner, share_session=False), False
+        queue: asyncio.Queue = asyncio.Queue()
+        sent = False
+
+        async def progress(kind: str, payload: object) -> None:
+            nonlocal sent
+            if kind == "text" and str(payload).strip():
+                queue.put_nowait({"kind": "text", "html": markdown_to_html(str(payload).strip())})
+                sent = True
+            elif kind == "tool":
+                name, tool_input = payload  # type: ignore[misc]
+                queue.put_nowait({"kind": "tool", "text": chat.describe_tool(name, tool_input or {})})
+
+        async def run() -> None:
+            # A task of its own, not the response's: closing the tab mid-turn
+            # leaves the turn to finish, and its reply lands in the transcript.
+            try:
+                reply = await agent.ask(text, profile, settings.claude_cli, on_progress=progress)
+                if reply.error:
+                    queue.put_nowait({"kind": "error", "text": reply.error})
+                elif not sent:
+                    queue.put_nowait({"kind": "error", "text": "I finished but produced no reply. That's a bug."})
+            except asyncio.CancelledError:
+                log.info("web chat turn stopped by the owner")
+                queue.put_nowait({"kind": "note", "text": "⏹️ Stopped."})
+            finally:
+                lock.release()
+                queue.put_nowait(None)
+
+        queue.put_nowait({"kind": "start"})
+        turn["task"] = asyncio.create_task(run())
+        return events(queue)
+
     async def api_brain(request: Request):
         return JSONResponse(graph())
 
@@ -591,6 +748,8 @@ def build_app(settings: Settings, token: str | None = None, hosts: tuple[str, ..
 
     return Starlette(middleware=[Middleware(TrustedHostMiddleware, allowed_hosts=list(hosts))], routes=[
         Route("/", guarded(index)),
+        Route("/chat", guarded(chat_view)),
+        Route("/api/chat", guarded(api_chat), methods=["POST"]),
         Route("/settings", guarded(settings_view)),
         Route("/architecture", guarded(architecture)),
         Route("/api/file", guarded(api_file_save), methods=["POST"]),

@@ -81,11 +81,11 @@ td.y { color:var(--ok) } td.n { color:var(--muted) } td.off { color:var(--bad); 
 /* timeline */
 .timeline { position:relative; margin:18px 0 6px; height:118px; border-radius:10px; background:var(--card); border:1px solid var(--line) }
 .axis { position:absolute; left:24px; right:24px; top:62px; height:2px; background:var(--line) }
-.tick { position:absolute; top:70px; font-size:11px; color:var(--muted); transform:translateX(-50%) }
+.tick { position:absolute; top:70px; font-size:11px; color:var(--muted); transform:translateX(-50%); white-space:nowrap }
 .ev { position:absolute; top:12px; transform:translateX(-50%); text-align:center; width:86px; font-size:12px; line-height:1.3 }
 .ev::after { content:""; display:block; width:12px; height:12px; border-radius:50%; background:var(--k); margin:6px auto 0;
   box-shadow:0 0 0 3px var(--card) }
-.ev b { display:block; font-size:12.5px } .ev.low { top:84px } .ev.low::after { display:none }
+.ev b { display:block; font-size:12.5px; white-space:nowrap } .ev.low { top:84px } .ev.low::after { display:none }
 .ev.low::before { content:""; display:block; width:12px; height:12px; border-radius:50%; background:var(--k); margin:-28px auto 6px }
 
 .mods { display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:8px }
@@ -128,7 +128,7 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
       <div class="box surface"><b>Discord DMs</b><span>the owner's assistant, streamed replies</span></div>
       <div class="box surface"><b>Discord channels</b><span>moderation and expression</span></div>
       <div class="box surface"><b>Terminal <code>claude</code></b><span>run in the vault, same conversation as DMs</span></div>
-      <div class="box surface"><b><code>qm web</code></b><span>dashboard, brain, settings (localhost)</span></div>
+      <div class="box surface"><b><code>qm web</code></b><span>dashboard, chat, brain, settings (localhost)</span></div>
       <div class="box surface"><b>Task Scheduler</b><span>sync, reconcile, presale, digest, tidy</span></div>
     </div>
     <div class="lane core">
@@ -160,7 +160,7 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
   <p class="sub">What happens between sending the bot a message and its reply.</p>
   <div class="flow">
     <div class="step" style="--k:var(--c-surface)"><b>Route</b>The bot sees a DM from the owner and picks the owner profile. "stop" and "start fresh" are handled in code.</div>
-    <div class="step" style="--k:var(--c-core)"><b>Build the turn</b>Model picked by a heuristic (Haiku, Sonnet or Opus). Lessons and open conflicts are appended, read fresh.</div>
+    <div class="step" style="--k:var(--c-core)"><b>Build the turn</b>Sonnet unless the message starts with <code>opus:</code> or <code>haiku:</code>; a fresh session after 5 idle minutes. Lessons and open conflicts are appended, read fresh.</div>
     <div class="step" style="--k:var(--c-model)"><b>Run Claude</b><code>claude.exe</code> starts with cwd = the vault and continues the shared session, so the terminal sees it too.</div>
     <div class="step" style="--k:var(--c-guard)"><b>Every tool call checked</b><code>check_tool</code> allows only the profile's tools and confines file access to the vault.</div>
     <div class="step" style="--k:var(--c-store)"><b>Reach your data</b>Vault files directly; calendar, mail, tasks and Notion through MCP servers.</div>
@@ -195,7 +195,7 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
   <h3>Profiles</h3>
   <div class="tablewrap"><table>
     <tr><th>Profile</th><th>Used by</th><th>Runs in</th><th>Tools</th><th>Session</th><th>Model</th></tr>
-    <tr><td><b>owner</b></td><td>your DMs, the terminal</td><td>the vault</td><td class="y">vault files, web research, MCP</td><td>shared</td><td>routed per turn</td></tr>
+    <tr><td><b>owner</b></td><td>your DMs, the web chat, the terminal</td><td>the vault</td><td class="y">vault files, web research, MCP</td><td>shared</td><td>Sonnet</td></tr>
     <tr><td><b>public</b></td><td>other people in channels</td><td>own workspace</td><td class="n">none</td><td>separate</td><td class="off">disabled</td></tr>
     <tr><td><b>parser</b></td><td>moderation requests</td><td>own workspace</td><td class="n">none, JSON out</td><td>none</td><td>Haiku</td></tr>
     <tr><td><b>digest</b></td><td>the digest</td><td>own workspace</td><td class="n">none</td><td>none</td><td>Sonnet</td></tr>

@@ -57,7 +57,7 @@ def test_session_entries_keep_text_and_label_the_surface(tmp_path):
     sid, entries = web.session_entries(tmp_path)
     assert sid == "s1"
     assert [(e["text"], e["source"]) for e in entries] == [
-        ("from discord", "discord"), ("reply", "discord"), ("from terminal", "terminal")]
+        ("from discord", "discord/web"), ("reply", "discord/web"), ("from terminal", "terminal")]
 
 
 def test_read_log_from_tails_and_follows(tmp_path):

@@ -59,6 +59,13 @@ DEFAULTS: dict = {
         # block or a hyperlink on a checklist line. Blank skips price checks.
         "page_id": "",
     },
+    "chat": {
+        # Minutes without activity (a message either way, from any surface)
+        # after which the next message starts a fresh conversation. Continuing
+        # re-sends the whole conversation every turn, so a stale one is paid
+        # for again and again. 0 never starts fresh on its own.
+        "fresh_after_minutes": 5,
+    },
     "digest": {
         "weekday": "sunday",
         "hour": 18,

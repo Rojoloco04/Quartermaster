@@ -95,6 +95,14 @@ class TestContainment:
         assert _options(public_profile(settings)).mcp_servers == {}
         assert _options(parser_profile(settings, {})).mcp_servers == {}
 
+    def test_no_connector_or_user_mcp_servers_are_loaded(self, settings: Settings):
+        # The claude.ai connectors and user-level servers were ~120k tokens of
+        # unusable tool schemas on every call ($4 for one calendar event).
+        for profile in (owner_profile(settings), public_profile(settings), parser_profile(settings, {})):
+            opts = _options(profile)
+            assert opts.strict_mcp_config
+            assert opts.env.get("ENABLE_CLAUDEAI_MCP_SERVERS") == "false"
+
     def test_owner_integration_tools_are_preapproved(self, settings: Settings):
         # A Discord turn has nobody to click "allow"; unapproved means unusable.
         assert "mcp__google" in owner_profile(settings).allowed_tools
@@ -115,19 +123,22 @@ class TestModelRouting:
     def test_public_always_gets_haiku(self, settings):
         assert pick_model("explain quantum computing in depth", public_profile(settings)) == HAIKU
 
-    def test_owner_default_is_sonnet(self, settings):
+    def test_owner_stays_on_sonnet_whatever_the_message(self, settings):
+        # Each model has its own prompt cache: switching per message re-sent
+        # the whole shared conversation uncached.
         profile = owner_profile(settings)
-        assert pick_model("what's the weather like tomorrow", profile) == SONNET
+        for prompt in ("what's the weather like tomorrow", "what's on my calendar today",
+                       "help me think through this architecture decision", "word " * 400):
+            assert pick_model(prompt, profile) == SONNET
 
-    def test_owner_long_or_hard_prompt_escalates_to_opus(self, settings):
+    def test_effort_is_explicit_and_never_sent_to_haiku(self, settings):
         profile = owner_profile(settings)
-        assert pick_model("help me think through this architecture decision", profile) == OPUS
-        assert pick_model("word " * 400, profile) == OPUS
+        assert _options(profile, "hello").effort == agent.EFFORT
+        assert _options(profile, "haiku: hello").effort is None
 
-    def test_owner_quick_lookup_drops_to_haiku(self, settings):
-        profile = owner_profile(settings)
-        assert pick_model("what's on my calendar today", profile) == HAIKU
-        assert pick_model("remind me to call mom", profile) == HAIKU
+    def test_user_settings_are_not_loaded(self, settings):
+        # ~/.claude is the owner's coding setup: skills, plugins, rules, xhigh effort.
+        assert _options(owner_profile(settings)).setting_sources == ["project"]
 
     def test_explicit_tag_always_wins(self, settings):
         # The owner's escape hatch when the heuristic guesses wrong.

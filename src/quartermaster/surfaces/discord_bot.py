@@ -19,30 +19,19 @@ import asyncio
 import json
 import logging
 import os
-import re
 import time
 from dataclasses import replace
-from pathlib import PurePath
-from urllib.parse import urlparse
 
 import discord
 
 from .. import agent
 from . import moderation
+from .chat import FRESH_NOTE, TurnLock, continue_or_fresh, describe_tool, lock_path, session_control
 from ..config import Settings, load_settings
 
 log = logging.getLogger(__name__)
 
 CHUNK = 1900  # Discord's ceiling is 2000; leave room for fence repair.
-
-# Whole-message session controls (see Quartermaster.command). `!stop`/`!new`
-# still work as aliases.
-_STOP = re.compile(r"(stop|cancel|abort|nvm|never ?mind|forget it|hold on|wait,? stop|stop that)[.! ]*")
-_NEW = re.compile(
-    r"(new (chat|conversation|thread|topic)|start (over|fresh|a new (chat|conversation|thread))"
-    r"|fresh (start|chat|conversation)|clean slate|reset( the)? (chat|conversation))[.! ]*"
-)
-
 
 def split_message(text: str, limit: int = CHUNK) -> list[str]:
     """Split a reply to fit Discord's message ceiling.
@@ -269,6 +258,8 @@ class Quartermaster(discord.Client):
             # every later turn continues the newest one, which is now this.
             profile = replace(profile, share_session=False)
             self._fresh = False
+        elif route == "owner":
+            profile = continue_or_fresh(self.settings, profile)
         await self.run_turn(message.channel, prompt, profile)
 
     async def command(self, channel: discord.abc.Messageable, text: str) -> bool:
@@ -280,19 +271,16 @@ class Quartermaster(discord.Client):
         Only a whole, short message counts, so "stop reminding me about X" is
         still an ordinary request.
         """
-        word = text.strip().lower()
-        if word == "!stop" or _STOP.fullmatch(word):
+        control = session_control(text)
+        if control == "stop":
             if self._turn is not None and not self._turn.done():
                 self._turn.cancel()
             else:
                 await channel.send("Nothing is running.")
             return True
-        if word == "!new" or _NEW.fullmatch(word):
+        if control == "new":
             self._fresh = True
-            await channel.send(
-                "Your next message starts a fresh conversation. The old one is still "
-                "there: `claude --resume` in the vault lists it."
-            )
+            await channel.send(FRESH_NOTE)
             return True
         return False
 
@@ -302,7 +290,18 @@ class Quartermaster(discord.Client):
         if self._busy.locked():
             await channel.send("Still working on the last one. Say \"stop\" to cancel it.")
             return
+        # The web chat shares the owner's session from another process.
+        shared = TurnLock(lock_path(self.settings)) if profile.name == "owner" else None
+        if shared is not None and not shared.acquire():
+            await channel.send("Busy with a message from the web chat. Try again when it's answered.")
+            return
+        try:
+            await self._run_turn(channel, prompt, profile)
+        finally:
+            if shared is not None:
+                shared.release()
 
+    async def _run_turn(self, channel: discord.abc.Messageable, prompt: str, profile: agent.Profile) -> None:
         async with self._busy, channel.typing():
             status = LiveStatus(channel)
             await status.start()
@@ -326,31 +325,6 @@ class Quartermaster(discord.Client):
             await channel.send(f"⚠️ {reply.error}")
         elif not status.sent_text:
             await channel.send("(I finished but produced no reply. That's a bug - tell me what you asked.)")
-
-
-def describe_tool(name: str, tool_input: dict) -> str:
-    """One short line for the status message: what the agent is doing now."""
-    path = tool_input.get("file_path") or ""
-    fixed = {
-        "Glob": "Searching the vault", "Grep": "Searching the vault",
-        "TodoWrite": "Planning", "Skill": "Using a skill",
-    }
-    if name in fixed:
-        return fixed[name]
-    if name == "Read":
-        return f"Reading `{PurePath(path).name}`"
-    if name in ("Write", "Edit"):
-        return f"Editing `{PurePath(path).name}`"
-    if name == "WebSearch":
-        return f"Searching the web for \"{str(tool_input.get('query', ''))[:60]}\""
-    if name == "WebFetch":
-        return f"Reading {urlparse(str(tool_input.get('url', ''))).netloc or 'a web page'}"
-    if name.startswith("mcp__"):
-        server, _, tool = name[5:].partition("__")
-        if server == "google":
-            return "Checking email" if "email" in tool else "Checking your calendar"
-        return {"microsoft": "Checking To Do", "spotify": "Checking Spotify"}.get(server, f"Using {tool}")
-    return f"Using {name}"
 
 
 class LiveStatus:

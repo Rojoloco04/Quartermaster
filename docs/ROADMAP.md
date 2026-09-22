@@ -17,9 +17,8 @@ Phases 1–4 are described as built in `CLAUDE.md`, including where the build
 deviated from the plan (the wishlist is a Notion page, not a database).
 
 Still open from Phase 4:
-- **Interest profile** — seed `facts/interests.md` from the Notion mirror,
-  Spotify and an import of the owner's Claude.ai chat memories; a hand-written
-  line outranks anything inferred. Refine from reactions to recommendations.
+- **Interest profile** — seeded 2026-09-22 (Claude.ai memories + Spotify). Still
+  open: refining it from reactions to recommendations.
 - **Switch the digest to weekly** (Sunday) once the daily output looks right.
 
 ---

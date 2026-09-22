@@ -6,21 +6,29 @@ How to use it day to day. `CLAUDE.md` covers how it works inside.
 
 DM the bot on Discord. It's the same conversation as `claude` in a terminal
 opened in your vault, so you can start on your phone and pick it up at your desk
-with `claude --continue`.
+with `claude --continue`. The **Chat** page in `qm web`
+(http://127.0.0.1:8766/chat) is the same conversation again, in the browser.
 
 - It streams: "let me check" arrives as its own message, and a status line at the
   bottom shows what it's doing ("🔧 Checking your calendar…") until it finishes.
 - Say "stop" (or "cancel", "nvm") on its own to cancel whatever it's doing.
 - Say "start fresh" (or "new chat") to begin a new conversation. The old one
   stays reachable with `claude --resume` in the vault.
+- One reply at a time across Discord and the web chat: while one is answering,
+  the other says it's busy. "stop" cancels only a reply started from the same
+  place. Notion changes proposed from the web chat are still confirmed in Discord.
 - Want Quartermaster itself changed? Just say so ("the digest is too long"). It
   can't edit its own code, so it adds the request to its dev queue, and it adds
   things it notices on its own too, marked "(noticed)". When you have Claude
   usage to spare, open Claude Code in the Quartermaster repo and say "work the
   dev queue" (`qm queue` prints the list). Nothing works the queue on its own.
-- Start a message with `opus:`, `sonnet:` or `haiku:` to pick the model for that
-  one message. Otherwise it picks: Haiku for quick lookups, Sonnet by default,
-  Opus for long or hard questions.
+- It answers with Sonnet. Start a message with `opus:` (hard questions) or
+  `haiku:` to use another model for that one message.
+- After 5 minutes with nothing said, your next message starts a fresh
+  conversation (re-sending a long one costs every turn). It still knows
+  everything in `facts/`; it just doesn't remember the last chat word for word.
+  Change the minutes with `chat.fresh_after_minutes` on the Settings page (0 =
+  never).
 
 What it can reach: your vault (read and write), the web, Google Calendar and
 Gmail (Gmail is read-only), Microsoft To Do (including checklist steps), Spotify
@@ -98,6 +106,10 @@ targets exactly that message.
 
 - `qm quit` (or `qm stop`) stops everything: the bot, the dashboard and any job
   mid-run. Then `qm bot` starts the bot again: two running bots double-reply.
+- `qm restart` stops the bot and dashboard and starts both again in the
+  background (no terminal needed; closing the terminal doesn't stop them). A
+  job mid-run is left alone. Their console output goes to `bot.out` / `web.out`
+  next to the log.
 - `qm schedule install --digest-cadence daily` (or `weekly`) registers the Notion
   sync (07:00), knowledge reconcile (07:30), presale check (08:00) and digest.
   `qm schedule status` shows them.

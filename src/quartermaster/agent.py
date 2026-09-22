@@ -110,6 +110,16 @@ DISCORD_STYLE = (
     "a file; summarise and give the path instead."
 )
 
+# The owner's, for both chat surfaces. One string on purpose: the system prompt
+# is the prompt cache's prefix, so a per-surface style made every switch between
+# Discord and the web chat rewrite the whole cached conversation (~$4 a turn).
+CHAT_STYLE = (
+    "You are replying in a chat (a Discord DM or Quartermaster's web page). Keep "
+    "it short - a few sentences unless asked for more. Use **bold**, `code` and "
+    "lists; no tables, headings or italics. Never paste more than a few lines of "
+    "a file; summarise and give the path instead."
+)
+
 
 # The owner asked this agent to stop a runaway presale ping; it edited
 # interests.md, which that job never read, and reported it fixed. It can only
@@ -183,7 +193,7 @@ def owner_profile(settings: Settings) -> Profile:
         allowed_tools=VAULT_TOOLS + RESEARCH_TOOLS + INTEGRATION_TOOLS,
         share_session=True,
         mcp_servers=integration_servers(),
-        system_append=DISCORD_STYLE + " " + OWNER_LIMITS,
+        system_append=CHAT_STYLE + " " + OWNER_LIMITS,
         lessons_file=lessons.lessons_path(settings),
         conflicts_file=settings.system_dir / "conflicts.md",
     )
@@ -313,22 +323,9 @@ HAIKU = "claude-haiku-4-5"
 SONNET = "claude-sonnet-5"
 OPUS = "claude-opus-5"
 
-# Content signals that a message needs Opus-level reasoning rather than
-# Sonnet's default. Deliberately narrow: a missed signal just runs on
-# Sonnet, which is usually fine; a false positive spends ~2.5x for nothing.
-_OPUS_SIGNALS = (
-    "architecture", "refactor", "trade-off", "tradeoff", "root cause",
-    "think hard", "think carefully", "design a", "security review",
-    "debug", "deep dive", "plan out",
-)
-
-# Short single-fact lookups where Haiku's speed matters more than Sonnet's
-# extra reasoning - the owner profile still validates nothing it says, but
-# these are the kind of question a wrong answer to gets noticed immediately.
-_HAIKU_STARTS = (
-    "what's on", "what is on", "when is", "when's", "what time",
-    "remind me", "list my", "mark ", "complete ",
-)
+# Thinking depth for every Sonnet/Opus turn. Chat, a digest and a reconcile
+# are not hard reasoning; "opus:" is there when one is.
+EFFORT = "medium"
 
 _OVERRIDE_TAGS = {"opus:": OPUS, "sonnet:": SONNET, "haiku:": HAIKU}
 
@@ -341,12 +338,13 @@ _FALLBACK = {OPUS: SONNET, SONNET: HAIKU, HAIKU: SONNET}
 
 
 def pick_model(prompt: str, profile: Profile) -> str:
-    """Route one turn to the cheapest model likely to do it justice.
+    """The model for one turn: fixed per profile, overridable per message by
+    starting it with "opus:", "sonnet:" or "haiku:".
 
-    A heuristic, not a classifier call - an extra request just to decide the
-    model would cost as much as a cheap turn itself, working against the
-    point of routing. Wrong guesses are cheap to correct: start a message
-    with "opus:", "sonnet:" or "haiku:" to force that tier for one turn.
+    The owner used to be routed per message (Haiku for quick lookups, Opus for
+    hard ones). In a long shared session that cost more than it saved: each
+    model has its own prompt cache, so every switch re-sent the whole
+    conversation uncached (one Haiku lookup wrote 158k tokens).
     """
     lower = prompt.strip().lower()
 
@@ -367,11 +365,6 @@ def pick_model(prompt: str, profile: Profile) -> str:
         # a chat message. Fixed at Sonnet rather than guessed.
         return SONNET
 
-    word_count = len(lower.split())
-    if word_count > 300 or any(signal in lower for signal in _OPUS_SIGNALS):
-        return OPUS
-    if word_count <= 12 and any(lower.startswith(s) for s in _HAIKU_STARTS):
-        return HAIKU
     return SONNET
 
 
@@ -398,8 +391,10 @@ def _options(profile: Profile, prompt: str = "", cli_path: str | None = None) ->
         **extra,
         # Loads CLAUDE.md and .claude/ from cwd - the same configuration the CLI
         # reads. For the public profile that directory is not the vault, so none
-        # of the vault's context is loaded either.
-        setting_sources=["user", "project"],
+        # of the vault's context is loaded either. Not "user": ~/.claude is the
+        # owner's coding setup (skills, plugins, rules, and Sonnet at xhigh
+        # effort), all of it tokens on every turn and none of it for chat.
+        setting_sources=["project"],
         system_prompt={
             "type": "preset",
             "preset": "claude_code",
@@ -408,6 +403,12 @@ def _options(profile: Profile, prompt: str = "", cli_path: str | None = None) ->
         tools=profile.tools,
         allowed_tools=profile.allowed_tools,
         mcp_servers=profile.mcp_servers,
+        # Only the servers above. Without these two the CLI also loaded the
+        # account's claude.ai connectors (Notion, Gmail, Drive, ...) and any
+        # user-level servers: ~120k tokens of tool schemas on every call, none
+        # of them usable under dontAsk.
+        strict_mcp_config=True,
+        env={"ENABLE_CLAUDEAI_MCP_SERVERS": "false"},
         disallowed_tools=NEVER_OVER_CHAT,
         # Anything not pre-approved is refused rather than left "ask"-able:
         # the CLI also loads the account's claude.ai connectors (Gmail send,
@@ -416,6 +417,8 @@ def _options(profile: Profile, prompt: str = "", cli_path: str | None = None) ->
         hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[_guard(profile)])]},
         continue_conversation=profile.share_session,
         max_turns=profile.max_turns,
+        # Explicit, so no settings file can raise it. Haiku doesn't take one.
+        **({"effort": EFFORT} if model != HAIKU else {}),
         **(
             {"output_format": {"type": "json_schema", "schema": profile.output_schema}}
             if profile.output_schema

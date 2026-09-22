@@ -42,6 +42,12 @@ claude_page_id = ""       # the one Notion page (and sub-pages) the agent may wr
 # hyperlink on a to-do/bulleted line. Leave blank to skip price checks.
 page_id = ""
 
+[chat]
+# After this many minutes with nothing said (Discord, web chat or terminal),
+# the next message starts a fresh conversation: continuing re-sends the whole
+# old one every turn. 0 = never start fresh on its own.
+fresh_after_minutes = 5
+
 [digest]
 weekday = "sunday"
 hour = 18

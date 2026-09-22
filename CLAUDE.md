@@ -4,7 +4,7 @@ What exists and why. The rules here are binding: read this before changing
 anything. `docs/GUIDE.md` is how to use it (also served by `qm web`);
 `docs/ROADMAP.md` is what's planned and what was rejected.
 
-State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 290 tests.
+State as of 2026-09-22: Phases 1–4 done, Phase 5 (infra) next. 304 tests.
 
 **Open right now**
 - Phase 5 infra: a service wrapper (restarting by hand leaves stale instances),
@@ -96,7 +96,7 @@ is enabled per clone with `git config core.hooksPath .githooks`.
 
 ```
 src/quartermaster/
-├── cli.py            qm doctor/init/sync/bot/web/digest/presale-check/reconcile/quit/schedule/mute/auth/mcp
+├── cli.py            qm doctor/init/sync/bot/web/digest/presale-check/reconcile/quit/restart/schedule/mute/auth/mcp
 ├── config.py         secrets from .env, preferences from the vault's 90-System/config.toml
 ├── agent.py          Agent SDK wrapper; Profile + check_tool are the security boundary
 ├── db.py             state.db — machine state only, rebuildable
@@ -107,7 +107,7 @@ src/quartermaster/
 ├── claude_tidy.py    weekly: propose a Claude page with the stale parts removed
 ├── reconcile.py      daily: dedupe/tidy facts + lessons, write and DM conflicts
 ├── lessons.py        facts/lessons.md: corrections, read into every owner turn and digest
-├── procs.py          `qm quit`: find and kill every Quartermaster process tree
+├── procs.py          `qm quit`/`restart`: find and kill Quartermaster process trees
 ├── schedule.py       Windows Task Scheduler wiring (schtasks.exe)
 ├── discord_ops.py    OpsPlan, permissions, hierarchy, matching (pure, well-tested)
 ├── integrations/     google, microsoft, spotify (OAuth; shared accounts.py),
@@ -115,7 +115,8 @@ src/quartermaster/
 │                     prices, lastfm, weather (Open-Meteo)
 ├── servers/          MCP servers over stdio (`qm mcp <name>`); shared helpers in __init__
 ├── dev_queue.py      the owner's queue of changes to this code (worked in Claude Code)
-└── surfaces/         discord_bot (routing, streaming, stop/start-fresh), moderation
+└── surfaces/         discord_bot (routing, streaming), chat (what DM and web chat share:
+                      stop/start-fresh, status wording, the cross-process TurnLock), moderation
                       (preview/confirm/execute), digest_send (one-shot DM), web (qm web),
                       brain (the /brain graph of the vault)
 vault-template/       copied into a new vault by `qm init`
@@ -127,6 +128,7 @@ vault-template/       copied into a new vault by `qm init`
 ./.venv/Scripts/qm.exe doctor              # first thing when anything misbehaves
 ./.venv/Scripts/qm.exe quit                # stop everything (bot, web, running jobs); alias `stop`
 ./.venv/Scripts/qm.exe bot                 # run the bot (quit the old one first!)
+./.venv/Scripts/qm.exe restart             # stop bot + web, start both detached (jobs untouched)
 ./.venv/Scripts/qm.exe reconcile --dry-run # what the daily knowledge check would change and ask
 ./.venv/Scripts/qm.exe digest --dry-run    # preview the digest; also presale-check --dry-run
 ./.venv/Scripts/qm.exe schedule install --digest-cadence daily   # or weekly
@@ -137,6 +139,11 @@ vault-template/       copied into a new vault by `qm init`
 yet, and two connected instances double-reply. `procs.ours` matches qm.exe and
 python running `qm.exe`/`quartermaster.cli` only: matching "quartermaster"
 anywhere once killed VS Code's language servers (they run on this venv).
+`qm restart` kills only processes whose qm subcommand is `bot`/`web`, starts
+both with `CREATE_NO_WINDOW` (`DETACHED_PROCESS` opened a blank console per
+process: qm.exe's python child allocates its own) (+ breakaway from the terminal's job when allowed)
+and output to `bot.out`/`web.out` beside the log, and reports FAILED with that
+output's tail if one exits within 4s. Live-verified 2026-09-22.
 
 **Scheduled tasks** (logged-in only): Notion sync 07:00 daily, reconcile 07:30
 daily, presale check 08:00 daily, Claude page tidy Sundays 09:00, digest at
@@ -182,8 +189,11 @@ Containment is enforced three ways, because each alone has leaked:
    with `allowed_tools=[]` once still had the whole toolset
    (`test_public_profile_is_given_no_builtin_tools_at_all`).
 2. **`permission_mode="dontAsk"`** refuses anything not pre-approved. This matters
-   because the CLI also loads the account's **claude.ai connectors** (Gmail send,
-   Drive share, Notion edit) into every profile.
+   because the CLI would also load the account's **claude.ai connectors** (Gmail
+   send, Drive share, Notion edit). They're now kept out entirely
+   (`strict_mcp_config` + `ENABLE_CLAUDEAI_MCP_SERVERS=false`): their schemas
+   were ~120k tokens on every call, and one calendar event cost $4. dontAsk stays
+   as the backstop.
 3. **`check_tool`**, a `PreToolUse` hook, re-checks the allow-list and confines
    Read/Write/Edit/Glob/Grep to `profile.cwd`, patterns included (an absolute
    `C:/Users/**` glob once searched the whole home directory). Writes to `.claude/`, `.mcp.json`
@@ -288,7 +298,7 @@ me about Tool" silences both the digest line and the presale ping. There is no
 `surfaces/web.py`, Starlette + uvicorn (already present via `mcp`). Read-only:
 bot status (from `bot.heartbeat`, written every 30s by the bot next to the log),
 scheduled jobs (`schedule.task_info`), recent turns parsed from the log, the
-newest shared-session transcript (labelled discord vs terminal by its
+newest shared-session transcript (labelled discord/web vs terminal by its
 `entrypoint`), a polling log tail, digests, mutes, and `docs/GUIDE.md`.
 `/architecture` serves `docs/architecture.html` as-is: a standalone one-page
 visual of the system (no personal data, the repo is public), also linked from
@@ -302,7 +312,8 @@ light up. A hand-rolled canvas force layout, no JS library, so it works offline.
 127.0.0.1; any other host requires `QM_WEB_TOKEN` (cookie after `/?token=`),
 because the log and transcripts hold DMs and email snippets.
 
-**`/settings` is the one place it writes.** The owner wants every configuration
+**`/settings` is the one place it writes files directly** (`/chat` runs owner
+turns, see Session sharing). The owner wants every configuration
 visible and editable without opening the vault: preferences in force (defaults
 merged with `config.toml`, read fresh, each marked yours/default), `.env` keys
 as set/not set (never values, never editable), and in-place editors for
@@ -321,6 +332,17 @@ both write to the same `~/.claude/projects/<encoded-vault>/`, and
 `continue_conversation=True` picks up the other surface's last turn. That's why
 `agent.ask()` calls `query()` per turn instead of holding a `ClaudeSDKClient`.
 Sync is turn-level, not live. Verified with one session file holding both.
+
+**The web chat** (`/chat`, `POST /api/chat`) is a third surface on the same
+session, run by the `qm web` process with the same `owner_profile` as the bot (one
+`CHAT_STYLE` for both: a per-surface system prompt busts the prompt cache). The reply streams back as server-sent events on the POST's own
+response; the turn is its own task, so closing the tab doesn't cancel it. Since
+the bot and web are separate processes, `chat.TurnLock` (an OS lock on the
+vault's `90-System/turn.lock`, gitignored, released if its holder dies) allows
+one owner turn at a time between them; whichever finds it held says busy. The
+terminal `claude` isn't covered. Guarded like `/settings` saves: CSRF header,
+Host check, the token gate beyond localhost. Proposed Notion writes still get
+their Confirm/Cancel in Discord (the bot's watcher).
 
 **Nothing else may run with `cwd` = the vault.** Every SDK run leaves a session
 file for its cwd and `--continue` resumes the newest, so the digest (which used
@@ -395,16 +417,25 @@ outside both repos.
 - **Don't `return` inside `async for message in query(...)`** — drain the loop.
 - **The SDK never times out.** `Profile.timeout_seconds` wraps each turn in
   `asyncio.wait_for`; check it first if a surface hangs.
-- **Model choice is a per-turn heuristic** (`agent.pick_model`): parser/public →
-  Haiku, digest → Sonnet, owner → Sonnet, Opus for long/hard, Haiku for quick
-  lookups. Prefix `opus:`/`sonnet:`/`haiku:` to force. `_FALLBACK` steps one tier
-  toward Sonnet on a 529.
+- **Model choice is fixed per profile** (`agent.pick_model`): parser/public →
+  Haiku, everything else → Sonnet at `EFFORT="medium"` (Haiku gets no effort).
+  Prefix `opus:`/`sonnet:`/`haiku:` to force one turn. The owner was once routed
+  per message; each model has its own prompt cache, so a switch re-sent the whole
+  conversation uncached. `_FALLBACK` steps one tier toward Sonnet on a 529.
+- **What a turn costs is mostly context.** On 2026-09-22 one calendar event
+  cost $4: ~225k tokens per call, of which ~120k were claude.ai connector
+  schemas (now kept out, see Security), ~30k an old digest prompt at the head of
+  the shared session, and the cache missed because the web chat's system prompt
+  differed from Discord's (now one `CHAT_STYLE`). `setting_sources=["project"]`
+  keeps `~/.claude` (the owner's coding skills, plugins, rules and xhigh
+  effort) out. `chat.fresh_after_minutes` (default 5) starts a new session
+  after that long with nothing said anywhere (`chat.continue_or_fresh`, by the
+  newest transcript's mtime), so an old conversation isn't re-sent forever.
 - Azure Portal with a personal account can loop on `AADSTS50058` if Edge's
   tracking prevention is above Basic.
 
 ## Known gaps
 
-- `facts/interests.md` isn't seeded (manual step for now).
 - Voice playback needs `PyNaCl` (not installed); voice *moderation* works.
 - Voice-mute durations live in memory — a restart leaves the person muted.
 - GIF search needs `KLIPY_API_KEY` (Tenor's API shut down 2026-06-30).
