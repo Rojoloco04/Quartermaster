@@ -5,7 +5,7 @@ from pathlib import Path
 
 from quartermaster import agent
 from quartermaster.config import Settings
-from quartermaster.surfaces.discord_bot import Quartermaster
+from quartermaster.discord_bot.bot import Quartermaster
 
 
 class FakeMessage:

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from quartermaster import mutes
+from quartermaster.knowledge import mutes
 from quartermaster.config import Settings
 from quartermaster.integrations import ticketmaster
 from quartermaster.integrations.ticketmaster import _haversine_miles, item_id

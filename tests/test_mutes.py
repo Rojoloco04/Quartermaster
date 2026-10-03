@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from quartermaster import mutes
+from quartermaster.knowledge import mutes
 
 
 def test_default_is_to_remind(tmp_path: Path):

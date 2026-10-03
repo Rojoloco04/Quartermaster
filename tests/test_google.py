@@ -8,13 +8,7 @@ import pytest
 
 from quartermaster.config import Settings
 from quartermaster.integrations import google
-from quartermaster.integrations.google import (
-    GoogleError,
-    event_time_body,
-    extract_body,
-    format_event,
-    parse_when,
-)
+from quartermaster.integrations.google import GoogleError, event_time_body, extract_body, format_event, parse_when
 
 
 def b64(text: str) -> str:

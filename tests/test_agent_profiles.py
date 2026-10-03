@@ -28,7 +28,7 @@ from quartermaster.agent import (
     public_profile,
 )
 from quartermaster.config import Settings
-from quartermaster.surfaces.discord_bot import split_message
+from quartermaster.discord_bot.bot import split_message
 
 
 @pytest.fixture
@@ -177,7 +177,7 @@ class TestTimeout:
             await asyncio.sleep(3600)
             yield  # pragma: no cover - the sleep above never lets this run
 
-        monkeypatch.setattr(agent, "query", hangs)
+        monkeypatch.setattr(agent.turn, "query", hangs)
         profile = replace(parser_profile(settings, {}), timeout_seconds=0.05)
 
         # Bounded from the outside too: if ask() regresses back to hanging,

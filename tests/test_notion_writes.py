@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from quartermaster import claude_tidy, db, notion_writes
+from quartermaster.knowledge import claude_tidy, notion_writes
+from quartermaster import db
 from quartermaster.config import DEFAULTS, Settings
 from quartermaster.integrations.notion import NotionError
 
@@ -119,11 +120,11 @@ def test_delete_backs_up_then_trashes(settings, conn, monkeypatch):
 
 
 def test_delete_tool_refuses_the_claude_page_and_unknown_pages(settings, monkeypatch):
-    from quartermaster import servers
-    from quartermaster.servers import qm
+    from quartermaster import mcp_servers
+    from quartermaster.mcp_servers import qm
     from mcp.server.mcpserver.exceptions import ToolError
 
-    monkeypatch.setattr(servers, "settings", lambda: settings)
+    monkeypatch.setattr(mcp_servers, "settings", lambda: settings)
     monkeypatch.setattr(qm, "settings", lambda: settings)
     with db.session(settings.db_path) as conn:
         conn.execute("INSERT INTO notion_pages (page_id, vault_path, title, synced_at) VALUES (?, ?, ?, ?)",

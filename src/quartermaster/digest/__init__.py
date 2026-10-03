@@ -33,13 +33,15 @@ import re
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 
-from .. import agent, db, mutes, stale
+from .. import agent, db
 from ..config import Settings
 from ..integrations import google, prices, ticketmaster
+from ..knowledge import mutes, stale
 from . import taste
 from .listings import group, item
 from .render import render
 from .taste import matches as matches_taste, positive_interests
+
 
 log = logging.getLogger(__name__)
 
@@ -343,7 +345,7 @@ def record(conn: sqlite3.Connection, marks: dict) -> None:
 
 
 def run_digest(settings: Settings, *, dry_run: bool = False) -> str:
-    from ..surfaces.digest_send import send_dm
+    from ..discord_bot.send import send_dm
 
     with db.session(settings.db_path) as conn:
         digest, marks = build(settings, conn)

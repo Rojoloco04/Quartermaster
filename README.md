@@ -1,6 +1,6 @@
 # Quartermaster
 
-A personal agent: a weekly digest, a Notion-mirrored memory, and one
+A personal agent: a daily digest, a Notion-mirrored memory, and one
 conversation you can reach from Discord or from Claude Code.
 
 **[How it fits together](docs/architecture.html)**: the architecture as a

@@ -34,7 +34,7 @@ The vault's system folder is `System/` (was `90-System/` until 2026-09-22).
   runs until stopped: `qm quit` leaves it up, and it's using RAM beside the
   owner's own game.
 
-**Lessons** (`lessons.py`): the owner agent calls the `qm` server's
+**Lessons** (`agent/lessons.py`): the owner agent calls the `qm` server's
 `record_lesson` when corrected; a dated line lands in `facts/lessons.md`, and
 `Profile.lessons_file` appends that file to the system prompt of every owner
 turn and digest, read fresh each turn so the bot needs no restart.
@@ -42,7 +42,7 @@ turn and digest, read fresh each turn so the bot needs no restart.
 **Keeping knowledge consistent.** Two layers. Immediately: `OWNER_LIMITS` tells
 the owner agent that when a fact changes it greps `facts/` and fixes every
 place that states it (and proposes a Notion edit if Notion is wrong). Daily at
-07:30, `reconcile.py`: one Sonnet call (no tools, `output_schema`) reads facts,
+07:30, `knowledge/reconcile.py`: one Sonnet call (no tools, `output_schema`) reads facts,
 lessons and the non-empty Notion mirror (~20k tokens) and returns edits and
 conflicts. Code applies edits only to existing `facts/*.md`, skips a file that
 changed mid-run or would lose >60%, and backs up the old version to
@@ -116,36 +116,59 @@ is enabled per clone with `git config core.hooksPath .githooks`.
 
 ## Layout
 
+Folders by job (restructured 2026-10-03; `git log --follow` traces a file
+back through its old path). Packages whose old single module was split
+(`agent`, `web`) re-export every name from their `__init__`, so
+`agent.ask` / `web.build_app` still work; patch a moved internal where it now
+lives (`agent.turn.query`, `web.app.dashboard`).
+
 ```
 src/quartermaster/
-├── cli.py            qm doctor/init/sync/bot/web/serve/digest/presale-check/reconcile/push/backup/quit/restart/schedule/mute/auth/mcp
-├── config.py         secrets from .env, preferences from the vault's System/config.toml
-├── agent.py          Agent SDK wrapper; Profile + check_tool are the security boundary
-├── db.py             state.db — machine state only, rebuildable
-├── mutes.py          the mute list
-├── notion_sync.py    one-way Notion pull;  notion_clean.py strips Notion's XML/expiring URLs
-├── digest.py         digest + presale orchestration;  stale.py stale-page heuristic
-├── notion_writes.py  proposed Notion edits, applied after a Confirm in Discord
-├── claude_tidy.py    weekly: propose a Claude page with the stale parts removed
-├── reconcile.py      daily: dedupe/tidy facts + lessons, write and DM conflicts
-├── lessons.py        facts/lessons.md: corrections, read into every owner turn and digest
-├── vault_push.py     daily: commit the whole vault and push it (its only backup); never forces
-├── game_backup.py    daily: zip each game server's world/saves to the backup drive (F:)
-├── procs.py          `qm quit`/`restart`, the `qm serve` supervisor, the one-instance locks
-├── schedule.py       Windows Task Scheduler wiring (schtasks.exe)
-├── discord_ops.py    OpsPlan, permissions, hierarchy, matching (pure, well-tested)
-├── integrations/     google, microsoft, spotify (OAuth; shared accounts.py),
-│                     notion (REST), claude_page (scoped writes), ticketmaster,
-│                     prices, lastfm, weather (Open-Meteo), minecraft (Paper over RCON),
-│                     satisfactory (SteamCMD + HTTPS API), game_servers (the /servers list)
-├── servers/          MCP servers over stdio (`qm mcp <name>`); shared helpers in __init__
-├── dev_queue.py      the owner's queue of changes to this code (worked in Claude Code)
-└── surfaces/         discord_bot (routing, streaming), chat (what DM and web chat share:
-                      stop/start-fresh, status wording, the cross-process TurnLock), moderation
-                      (preview/confirm/execute), minecraft_chat (the server from a channel,
-                      op-gated), digest_send (one-shot DM), web (qm web),
-                      brain (the /brain graph of the vault)
-vault-template/       copied into a new vault by `qm init`
+├── cli.py               every qm command
+├── config.py            secrets from .env, preferences from the vault's System/config.toml
+├── db.py                state.db — machine state only, rebuildable, pruned daily
+├── chat.py              what DM and web chat share: stop/start-fresh, status wording, TurnLock
+├── agent/               the Agent SDK wrapper — the security boundary
+│   ├── profiles.py      Profile and each profile (owner, public, parser, digest, tidy, reconcile)
+│   ├── guard.py         check_tool: the PreToolUse hook (allow-list, path confinement)
+│   ├── turn.py          ask(): options, model choice, one streamed turn (logs as quartermaster.agent)
+│   └── lessons.py       facts/lessons.md: corrections, read into every owner turn and digest
+├── knowledge/           what the agent knows, kept true
+│   ├── notion_sync.py   one-way Notion pull (notion_clean.py strips Notion's XML/expiring URLs)
+│   ├── notion_writes.py proposed Notion edits, applied after a Confirm in Discord
+│   ├── claude_tidy.py   weekly: propose a Claude page with the stale parts removed
+│   ├── reconcile.py     daily: dedupe/tidy facts + lessons, write and DM conflicts
+│   ├── stale.py         the stale-page heuristic
+│   └── mutes.py         the mute list
+├── digest/              the daily digest (see "The digest")
+│   ├── __init__.py      collectors, the event-picking call, build/run
+│   ├── listings.py      Ticketmaster listings grouped into one item per show
+│   ├── render.py        the digest's JSON as a Discord message
+│   └── taste.py         top artists + interests.md matching
+├── discord_bot/         the bot
+│   ├── bot.py           routing, streaming replies, the approvals watcher
+│   ├── moderation.py    preview/confirm/execute;  plans.py: OpsPlan, permissions, matching (pure)
+│   ├── minecraft_chat.py the Minecraft server from a channel, op-gated
+│   └── send.py          one-shot DM (digest, reconcile)
+├── web/                 qm web
+│   ├── app.py           routes, Host check, token gate, CSRF, serve
+│   ├── layout.py        page shell, nav, CSS, escaping, markdown
+│   ├── dashboard_view.py, chat_view.py, settings_view.py (+ the only file writes), servers_view.py
+│   └── brain.py         the /brain graph of the vault
+├── games/               game servers; __init__ is the registry (GAMES) the /servers page lists
+│   ├── minecraft.py     Paper over RCON
+│   └── satisfactory.py  SteamCMD + HTTPS API
+├── ops/                 keeping it running
+│   ├── procs.py         qm quit/restart, the qm serve supervisor, one-instance locks
+│   ├── schedule.py      Windows Task Scheduler wiring (schtasks.exe)
+│   ├── vault_push.py    daily: commit the whole vault and push it (its only backup); never forces
+│   ├── game_backup.py   daily: zip each game server's world/saves to the backup drive (F:)
+│   └── dev_queue.py     the owner's queue of changes to this code (worked in Claude Code)
+├── integrations/        google, microsoft, spotify (OAuth; shared accounts.py), notion (REST),
+│                        claude_page (scoped writes), ticketmaster, prices, lastfm
+└── mcp_servers/         MCP servers over stdio (`qm mcp <name>`); not `mcp/`, which would
+                         read as the `mcp` library (same reason `discord_bot/` isn't `discord/`)
+vault-template/          copied into a new vault by `qm init`
 ```
 
 ## Running it
@@ -199,7 +222,7 @@ opening a window. Live-verified with the push task. The push is the vault's
 backup (restic was dropped): `git add -A`, commit, push, with prompts disabled
 so a credential problem fails instead of hanging; it refuses a detached HEAD or
 a merge/rebase in progress and never forces. Re-run `qm schedule
-install` after changing `schedule.py` — the sync task only exists once it has
+install` after changing `ops/schedule.py` — the sync task only exists once it has
 been re-installed (it was first registered 2026-09-22 and had never fired, which
 is why pages deleted in Notion lingered).
 
@@ -224,7 +247,7 @@ pipe and vanished once already.
 
 ## Security model
 
-### Profiles (`agent.py`)
+### Profiles (`agent/`)
 
 | | owner (DMs) | public (channels) | parser | digest |
 | --- | --- | --- | --- | --- |
@@ -260,7 +283,7 @@ lowers the exfiltration risk, doesn't remove it.
 
 ### Moderation: the model parses, code executes
 
-`discord_ops.py` + `surfaces/moderation.py`. The model never holds a moderation
+`discord_bot/plans.py` + `discord_bot/moderation.py`. The model never holds a moderation
 tool: it emits a structured `OpsPlan`; code checks the invoker's real Discord
 permission in that channel, role hierarchy both ways, gathers matches, confirms
 (destructive only), executes. The model is never consulted after parsing, so
@@ -332,7 +355,7 @@ sub-pages are the agent's own: written directly through the `qm` server
 out-of-scope write is refused before any request is sent (live-verified).
 
 **Every other page** goes through `propose_notion_edit`, which writes nothing:
-it stores a row in `pending_writes` (`notion_writes.py`). The bot's
+it stores a row in `pending_writes` (`knowledge/notion_writes.py`). The bot's
 `_watch_approvals` loop DMs the owner a preview built from the row's fields with
 Confirm/Cancel, and code applies it only on Confirm. The button is the gate: an
 email the agent read can produce a proposal, it cannot approve one. Rows stay
@@ -346,12 +369,12 @@ drops it from the mirror. A restart re-offers anything
 still pending, so an earlier message's buttons stop responding - the newest DM
 for that change is the live one. Losing a proposal is worse than a duplicate.
 
-**Tidying** (`claude_tidy.py`, `qm tidy`, Sundays 09:00): one model call
+**Tidying** (`knowledge/claude_tidy.py`, `qm tidy`, Sundays 09:00): one model call
 rewrites the Claude page without its stale parts and *proposes* the replace. A
 rewrite that would cut the page by more than 60% is dropped rather than shown -
 a tidy prunes, it doesn't gut. The Notion integration needs "Insert content".
 
-## Minecraft (`integrations/minecraft.py`)
+## Minecraft (`games/minecraft.py`)
 
 A Paper server friends reach over Tailscale, managed from DMs through the `qm`
 server's `minecraft_*` tools and from the terminal with `qm minecraft`. It lives
@@ -373,13 +396,13 @@ outside both repos (`%LOCALAPPDATA%\quartermaster\minecraft`). Deliberate:
   running. Status is the pid file + tasklist, then RCON.
 - `qm minecraft op <name>` (whitelist + op) is terminal-only on purpose: it's
   how the owner grants op without `op` ever being in `ALLOWED_COMMANDS`.
-- **In guild channels** (`surfaces/minecraft_chat.py`) it rides the moderation
+- **In guild channels** (`discord_bot/minecraft_chat.py`) it rides the moderation
   path: the parser emits `OpsPlan(action="minecraft", minecraft_op=...)` and
   `moderation.handle` hands it over before any Discord permission check.
   status/link/verify: anyone. start/stop/command: the owner, or a member whose
   linked name is in the server's `ops.json` right now (`may_control`); commands
   still pass `ALLOWED_COMMANDS`, ops included. stop confirms.
-- **`/servers`** in `qm web`: a tab per entry in `integrations/game_servers.GAMES`
+- **`/servers`** in `qm web`: a tab per entry in `games.GAMES`
   (a game = a module with `status/start/stop/is_running/log_path`; the next game
   is its module plus one line there). Status polled every 10s, Start/Stop behind
   the CSRF header, the console (`console.out`, truncated per start, ANSI
@@ -392,7 +415,7 @@ outside both repos (`%LOCALAPPDATA%\quartermaster\minecraft`). Deliberate:
   writes the link. The file is on `_PROTECTED` (an email must not get the
   owner agent to grant control) and editable in /settings.
 
-## Satisfactory (`integrations/satisfactory.py`)
+## Satisfactory (`games/satisfactory.py`)
 
 A dedicated server beside Minecraft, same shape: `qm satisfactory`, the `qm`
 server's `satisfactory_status/start/stop/save`, a /servers tab. Deliberate:
@@ -425,7 +448,7 @@ server's `satisfactory_status/start/stop/save`, a /servers tab. Deliberate:
   `stop` (saved, exited in 8s), start autoloaded the session, the /servers tab,
   and it outlived `qm restart`. Not yet: a DM, or a friend joining over Tailscale.
 
-## Game server backups (`game_backup.py`)
+## Game server backups (`ops/game_backup.py`)
 
 `qm backup`, daily 05:00: one zip per game in `backups.dir`
 (`F:\Backups\servers\<game>\<YYYY-MM-DD_HHMMSS>.zip`; F: is the HDD, the live
@@ -459,7 +482,7 @@ me about Tool" silences both its events and its on-sales. There is no
 
 ## Dashboard (`qm web`)
 
-`surfaces/web.py`, Starlette + uvicorn (already present via `mcp`). Read-only:
+`web/`, Starlette + uvicorn (already present via `mcp`). Read-only:
 bot status (from `bot.heartbeat`, written every 30s by the bot next to the log),
 scheduled jobs (`schedule.task_info`; the service task is shown under the bot, not as a job), recent turns parsed from the log, the
 newest shared-session transcript (labelled discord/web vs terminal by its
@@ -467,7 +490,7 @@ newest shared-session transcript (labelled discord/web vs terminal by its
 `/architecture` serves `docs/architecture.html` as-is: a standalone one-page
 visual of the system (no personal data, the repo is public), also linked from
 the README. Update it when the architecture changes.
-`/brain` (`surfaces/brain.py`) draws the vault's knowledge as a graph: `notion/`
+`/brain` (`web/brain.py`) draws the vault's knowledge as a graph: `notion/`
 and `facts/` only (`KNOWLEDGE_DIRS`), no READMEs, digests, inbox or system
 files - the owner wants what's known, not artifacts. Edges come only from
 links, folders and title mentions (a title named in >15% of notes is skipped as

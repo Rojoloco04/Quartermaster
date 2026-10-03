@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from quartermaster import notion_sync
+from quartermaster.knowledge import notion_sync
 from quartermaster.config import DEFAULTS, Settings
 from quartermaster.integrations.notion import PageMarkdown
 
@@ -101,8 +101,8 @@ def test_renaming_a_parent_moves_its_children(settings):
 
 
 def test_sync_is_callable_from_chat(settings, monkeypatch):
-    from quartermaster import servers
-    from quartermaster.servers import qm
+    from quartermaster import mcp_servers
+    from quartermaster.mcp_servers import qm
 
-    monkeypatch.setattr(servers, "settings", lambda: settings)
+    monkeypatch.setattr(mcp_servers, "settings", lambda: settings)
     assert "Notion sync done: 4 pages scanned, 4 written" in qm.sync_notion()

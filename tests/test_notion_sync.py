@@ -7,7 +7,7 @@ truncation flag means the agent answers confidently from half a page.
 
 from pathlib import Path
 
-from quartermaster.notion_sync import _frontmatter, _vault_path, assign_paths, slugify
+from quartermaster.knowledge.notion_sync import _frontmatter, _vault_path, assign_paths, slugify
 
 
 def page(pid: str, title: str, parent: str | None = None) -> dict:

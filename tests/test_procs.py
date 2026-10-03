@@ -1,4 +1,4 @@
-from quartermaster import procs
+from quartermaster.ops import procs
 
 
 def _p(pid, ppid, name, cmd):

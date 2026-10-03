@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 
 from quartermaster.config import Settings
-from quartermaster.integrations import minecraft
-from quartermaster.integrations.minecraft import (
+from quartermaster.games import minecraft
+from quartermaster.games.minecraft import (
     MinecraftError,
     default_properties,
     java_major,

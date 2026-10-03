@@ -9,8 +9,8 @@ from starlette.testclient import TestClient
 
 from quartermaster import agent
 from quartermaster.config import DEFAULTS, Settings
-from quartermaster.surfaces import chat, web
-from quartermaster.surfaces.discord_bot import Quartermaster
+from quartermaster import chat, web
+from quartermaster.discord_bot.bot import Quartermaster
 
 from test_bot_commands import FakeChannel
 
@@ -144,7 +144,7 @@ def test_session_control_words():
 def test_quiet_for_the_limit_starts_a_fresh_session(tmp_path, monkeypatch):
     import os
     import time as _time
-    monkeypatch.setattr(agent.Path, "home", lambda: tmp_path / "home")
+    monkeypatch.setattr(agent.turn.Path, "home", lambda: tmp_path / "home")
     s = Settings(vault=tmp_path / "Vault", prefs={"chat": {"fresh_after_minutes": 5}})
     owner = agent.owner_profile(s)
     assert chat.continue_or_fresh(s, owner).share_session  # no sessions yet

@@ -1,7 +1,7 @@
 """The stale-page heuristic: old and still looking unfinished. Pure string
 tests - `looks_unfinished` never touches disk."""
 
-from quartermaster.stale import item_id, looks_unfinished
+from quartermaster.knowledge.stale import item_id, looks_unfinished
 
 
 class TestLooksUnfinished:

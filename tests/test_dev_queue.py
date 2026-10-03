@@ -2,7 +2,8 @@
 
 from pathlib import Path
 
-from quartermaster import agent, dev_queue
+from quartermaster import agent
+from quartermaster.ops import dev_queue
 from quartermaster.config import Settings
 
 
@@ -25,10 +26,10 @@ def test_agents_queue_only_through_the_tool(tmp_path: Path):
 
 
 def test_queue_change_tool_tags_and_dedupes(tmp_path: Path, monkeypatch):
-    from quartermaster import servers
-    from quartermaster.servers import qm
+    from quartermaster import mcp_servers
+    from quartermaster.mcp_servers import qm
 
-    monkeypatch.setattr(servers, "settings", lambda: Settings(vault=tmp_path))
+    monkeypatch.setattr(mcp_servers, "settings", lambda: Settings(vault=tmp_path))
     monkeypatch.setattr(qm, "settings", lambda: Settings(vault=tmp_path))
     assert "Queued (1 open)" in qm.queue_change("Add weather to the digest")
     assert qm.queue_change("add weather to the digest") == "Already in the dev queue."

@@ -2,7 +2,8 @@
 
 from pathlib import Path
 
-from quartermaster import agent, lessons
+from quartermaster import agent
+from quartermaster.agent import lessons
 from quartermaster.config import Settings
 
 
@@ -45,10 +46,10 @@ def test_owner_and_digest_read_lessons_fresh_every_turn(tmp_path: Path):
 
 
 def test_record_lesson_tool(tmp_path: Path, monkeypatch):
-    from quartermaster import servers
-    from quartermaster.servers import qm
+    from quartermaster import mcp_servers
+    from quartermaster.mcp_servers import qm
 
-    monkeypatch.setattr(servers, "settings", lambda: Settings(vault=tmp_path))
+    monkeypatch.setattr(mcp_servers, "settings", lambda: Settings(vault=tmp_path))
     monkeypatch.setattr(qm, "settings", lambda: Settings(vault=tmp_path))
     assert "Recorded" in qm.record_lesson("Keep digest lines under 80 characters.")
     assert qm.record_lesson("keep digest lines under 80 characters.") == "Already recorded."

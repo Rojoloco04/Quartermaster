@@ -9,9 +9,9 @@ import pytest
 
 from quartermaster import agent
 from quartermaster.config import Settings
-from quartermaster.discord_ops import OpsPlan
-from quartermaster.surfaces import discord_bot, moderation
-from quartermaster.surfaces.discord_bot import HourlyQuota
+from quartermaster.discord_bot.plans import OpsPlan
+from quartermaster.discord_bot import bot as discord_bot, moderation
+from quartermaster.discord_bot.bot import HourlyQuota
 
 
 def test_chat_is_a_plan_the_parser_can_emit():
@@ -19,7 +19,7 @@ def test_chat_is_a_plan_the_parser_can_emit():
 
 
 def test_parser_is_told_to_prefer_chat_over_guessing():
-    from quartermaster.discord_ops import PARSE_PROMPT
+    from quartermaster.discord_bot.plans import PARSE_PROMPT
 
     assert "-> chat" in PARSE_PROMPT and "prefer chat over guessing" in PARSE_PROMPT
 

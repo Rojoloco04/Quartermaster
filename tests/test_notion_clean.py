@@ -8,7 +8,7 @@ carries temporary AWS credentials, and is dead an hour later — keeping one bur
 the page's actual prose and leaves a link that will never work again.
 """
 
-from quartermaster.notion_clean import clean, notion_id_from_url
+from quartermaster.knowledge.notion_clean import clean, notion_id_from_url
 
 # Built at runtime rather than written literally: a real credential string in
 # a source file is exactly what the pre-commit hook exists to stop, and this

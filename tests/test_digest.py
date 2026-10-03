@@ -168,7 +168,7 @@ def test_a_run_shows_onsales_once_and_events_the_model_picked(settings, monkeypa
 
     sent = []
     monkeypatch.setattr(agent, "ask", fake_ask)
-    monkeypatch.setattr("quartermaster.surfaces.digest_send.send_dm", lambda s, text: sent.append(text))
+    monkeypatch.setattr("quartermaster.discord_bot.send.send_dm", lambda s, text: sent.append(text))
 
     preview = digest.run_digest(settings, dry_run=True)
     assert "**Tool** · Fear Inoculum" in preview and "Somebody" not in preview
@@ -200,7 +200,7 @@ def test_a_failed_pick_keeps_the_events_for_tomorrow(settings, monkeypatch):
     monkeypatch.setattr(agent, "ask", broken)
     monkeypatch.setattr(digest.google, "calendar_events", lambda *a, **k: [
         {"summary": "Gym", "start": {"dateTime": "2026-10-03T07:00:00-05:00"}, "end": {"dateTime": "2026-10-03T08:00:00-05:00"}}])
-    monkeypatch.setattr("quartermaster.surfaces.digest_send.send_dm", lambda s, text: None)
+    monkeypatch.setattr("quartermaster.discord_bot.send.send_dm", lambda s, text: None)
     text = digest.run_digest(settings)
     assert "Couldn't check: couldn't pick events (spend cap)" in text and "Gym" in text
     with db.session(settings.db_path) as conn:

@@ -133,9 +133,9 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
     </div>
     <div class="lane core">
       <h4>Quartermaster (Python)</h4>
-      <div class="box core"><b>surfaces/</b><span>discord_bot, moderation, web, brain, digest_send</span></div>
-      <div class="box core"><b>jobs</b><span>notion_sync, reconcile, digest + presale, claude_tidy, vault_push</span></div>
-      <div class="box core"><b>agent.py</b><span>profiles, model routing, lessons + conflicts in context</span></div>
+      <div class="box core"><b>discord_bot/, web/</b><span>the bot, moderation, qm web, the brain graph</span></div>
+      <div class="box core"><b>jobs</b><span>knowledge/ (sync, reconcile, tidy), digest/, ops/ (vault push, game backup)</span></div>
+      <div class="box core"><b>agent/</b><span>profiles, model routing, lessons + conflicts in context</span></div>
       <div class="box guard"><b>check_tool hook</b><span>re-checks every tool call and path</span></div>
     </div>
     <div class="lane model">
@@ -253,24 +253,19 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
 <section>
   <h3>Module map</h3>
   <div class="mods">
-    <div class="mod"><code>agent.py</code><span>profiles, model routing, check_tool, one turn</span></div>
+    <div class="mod"><code>agent/</code><span>profiles, check_tool (guard), one turn, lessons</span></div>
     <div class="mod"><code>cli.py</code><span>every <code>qm</code> command</span></div>
     <div class="mod"><code>config.py</code><span>.env secrets, vault config.toml preferences</span></div>
-    <div class="mod"><code>notion_sync.py</code><span>one-way Notion pull into the mirror</span></div>
-    <div class="mod"><code>digest.py</code><span>collectors (calendar, weather, events, prices, stale pages) → one prompt</span></div>
-    <div class="mod"><code>reconcile.py</code><span>daily dedupe and conflict check of facts</span></div>
-    <div class="mod"><code>lessons.py</code><span>corrections kept and read every turn</span></div>
-    <div class="mod"><code>vault_push.py</code><span>daily commit + push of the vault, its backup</span></div>
-    <div class="mod"><code>game_backup.py</code><span>nightly zips of the game servers to the backup drive</span></div>
-    <div class="mod"><code>notion_writes.py</code><span>proposals applied only after Confirm</span></div>
-    <div class="mod"><code>claude_tidy.py</code><span>weekly prune of the agent's Notion page</span></div>
-    <div class="mod"><code>discord_ops.py</code><span>moderation plans, permissions, matching</span></div>
-    <div class="mod"><code>integrations/</code><span>google, microsoft, spotify, notion, ticketmaster, weather, lastfm, prices</span></div>
-    <div class="mod"><code>servers/</code><span>MCP servers over stdio (<code>qm mcp &lt;name&gt;</code>)</span></div>
-    <div class="mod"><code>surfaces/</code><span>discord_bot, moderation, web, brain, digest_send</span></div>
-    <div class="mod"><code>schedule.py</code><span>Task Scheduler wiring</span></div>
-    <div class="mod"><code>procs.py</code><span><code>qm quit</code>/<code>restart</code>, the <code>qm serve</code> supervisor the logon task runs, one-instance locks</span></div>
-    <div class="mod"><code>db.py</code><span>state.db: counts and observations, rebuildable</span></div>
+    <div class="mod"><code>db.py</code><span>state.db: counts and observations, rebuildable, pruned daily</span></div>
+    <div class="mod"><code>chat.py</code><span>what the DM and web chat share: stop, start fresh, the turn lock</span></div>
+    <div class="mod"><code>knowledge/</code><span>Notion sync and approved writes, reconcile, Claude page tidy, stale pages, mutes</span></div>
+    <div class="mod"><code>digest/</code><span>collectors → the digest's JSON → rendered message; the model only picks events</span></div>
+    <div class="mod"><code>discord_bot/</code><span>the bot, moderation plans and execution, Minecraft from a channel, one-shot DMs</span></div>
+    <div class="mod"><code>web/</code><span><code>qm web</code>: app, page views, the brain graph</span></div>
+    <div class="mod"><code>games/</code><span>Minecraft and Satisfactory servers, and the registry /servers lists</span></div>
+    <div class="mod"><code>ops/</code><span>supervisor and locks, Task Scheduler, vault push, game backups, dev queue</span></div>
+    <div class="mod"><code>integrations/</code><span>google, microsoft, spotify, notion, claude_page, ticketmaster, lastfm, prices</span></div>
+    <div class="mod"><code>mcp_servers/</code><span>MCP servers over stdio (<code>qm mcp &lt;name&gt;</code>)</span></div>
   </div>
 </section>
 

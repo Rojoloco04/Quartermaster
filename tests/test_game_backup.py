@@ -9,11 +9,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from quartermaster import game_backup
+from quartermaster.ops import game_backup
 from quartermaster.config import Settings
-from quartermaster.game_backup import backup_game, files_of, last_backup, run_backup
-from quartermaster.integrations import minecraft, satisfactory
-from quartermaster.schedule import BACKUP_TASK, build_tasks
+from quartermaster.ops.game_backup import backup_game, files_of, last_backup, run_backup
+from quartermaster.games import minecraft, satisfactory
+from quartermaster.ops.schedule import BACKUP_TASK, build_tasks
 
 
 @pytest.fixture

@@ -16,9 +16,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import db, mutes
+from . import db
 from .agent import MCP_SERVERS
-from .config import REPO_ROOT, load_settings
+from .config import load_settings, REPO_ROOT
+from .knowledge import mutes
+
 
 log = logging.getLogger("quartermaster.cli")
 
@@ -238,7 +240,7 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def cmd_sync(args: argparse.Namespace) -> int:
-    from .notion_sync import sync
+    from .knowledge.notion_sync import sync
 
     settings = load_settings()
     if not settings.vault.exists():
@@ -274,7 +276,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
 def _only_instance(settings, name: str):
     """This process's hold on ``<name>.lock``, or None (and says so) if another
     ``qm <name>`` already runs. Two connected bots double-reply."""
-    from . import procs
+    from .ops import procs
 
     lock = procs.instance_lock(settings.log_path.parent, name)
     if lock is None:
@@ -284,7 +286,7 @@ def _only_instance(settings, name: str):
 
 
 def cmd_bot(args: argparse.Namespace) -> int:
-    from .surfaces.discord_bot import run
+    from .discord_bot.bot import run
 
     settings = load_settings()
     if not (lock := _only_instance(settings, "bot")):
@@ -296,7 +298,7 @@ def cmd_bot(args: argparse.Namespace) -> int:
 
 
 def cmd_web(args: argparse.Namespace) -> int:
-    from .surfaces.web import serve
+    from .web import serve
 
     settings = load_settings()
     if not (lock := _only_instance(settings, "web")):
@@ -309,7 +311,7 @@ def cmd_web(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
-    from . import procs
+    from .ops import procs
 
     settings = load_settings()
     if not (lock := _only_instance(settings, "serve")):
@@ -344,7 +346,7 @@ def cmd_digest(args: argparse.Namespace) -> int:
 
 
 def cmd_tidy(args: argparse.Namespace) -> int:
-    from . import claude_tidy
+    from .knowledge import claude_tidy
 
     settings = load_settings()
     try:
@@ -357,7 +359,7 @@ def cmd_tidy(args: argparse.Namespace) -> int:
 
 
 def cmd_reconcile(args: argparse.Namespace) -> int:
-    from . import reconcile
+    from .knowledge import reconcile
 
     settings = load_settings()
     try:
@@ -370,7 +372,7 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
 
 
 def cmd_push(args: argparse.Namespace) -> int:
-    from . import vault_push
+    from .ops import vault_push
 
     settings = load_settings()
     try:
@@ -383,7 +385,7 @@ def cmd_push(args: argparse.Namespace) -> int:
 
 
 def cmd_backup(args: argparse.Namespace) -> int:
-    from . import game_backup
+    from .ops import game_backup
 
     ok, summary = game_backup.run_backup(load_settings())
     print(summary)
@@ -391,7 +393,7 @@ def cmd_backup(args: argparse.Namespace) -> int:
 
 
 def cmd_minecraft(args: argparse.Namespace) -> int:
-    from .integrations import minecraft
+    from .games import minecraft
 
     settings = load_settings()
     try:
@@ -415,7 +417,7 @@ def cmd_minecraft(args: argparse.Namespace) -> int:
 
 
 def cmd_satisfactory(args: argparse.Namespace) -> int:
-    from .integrations import satisfactory
+    from .games import satisfactory
 
     settings = load_settings()
     try:
@@ -442,7 +444,7 @@ def cmd_satisfactory(args: argparse.Namespace) -> int:
 
 
 def cmd_quit(args: argparse.Namespace) -> int:
-    from . import procs
+    from .ops import procs
 
     stopped = procs.quit_all()
     print("Stopped: " + ", ".join(stopped) if stopped else "Nothing was running.")
@@ -450,7 +452,7 @@ def cmd_quit(args: argparse.Namespace) -> int:
 
 
 def cmd_restart(args: argparse.Namespace) -> int:
-    from . import procs
+    from .ops import procs
 
     out_dir = load_settings().log_path.parent
     stopped, started, failed = procs.restart(out_dir)
@@ -463,7 +465,7 @@ def cmd_restart(args: argparse.Namespace) -> int:
 
 
 def cmd_queue(args: argparse.Namespace) -> int:
-    from . import dev_queue
+    from .ops import dev_queue
 
     path = dev_queue.queue_path(load_settings())
     if args.text:
@@ -475,7 +477,7 @@ def cmd_queue(args: argparse.Namespace) -> int:
 
 
 def cmd_schedule(args: argparse.Namespace) -> int:
-    from . import schedule
+    from .ops import schedule
 
     if args.action == "install":
         settings = load_settings()
@@ -539,7 +541,7 @@ def cmd_auth(args: argparse.Namespace) -> int:
 
 def cmd_mcp(args: argparse.Namespace) -> int:
     # stdout is the protocol channel from here on - nothing else may print.
-    importlib.import_module(f".servers.{args.server}", __package__).server.run("stdio")
+    importlib.import_module(f".mcp_servers.{args.server}", __package__).server.run("stdio")
     return 0
 
 

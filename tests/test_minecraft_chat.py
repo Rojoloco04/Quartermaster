@@ -9,10 +9,10 @@ import pytest
 
 from quartermaster import agent
 from quartermaster.config import Settings
-from quartermaster.discord_ops import OpsPlan
-from quartermaster.integrations import minecraft
-from quartermaster.integrations.minecraft import LinkCodes, add_link, links_path, may_control, read_links
-from quartermaster.surfaces import minecraft_chat
+from quartermaster.discord_bot.plans import OpsPlan
+from quartermaster.games import minecraft
+from quartermaster.games.minecraft import LinkCodes, add_link, links_path, may_control, read_links
+from quartermaster.discord_bot import minecraft_chat
 
 OWNER, FRIEND, STRANGER = 111111111111111111, 222222222222222222, 333333333333333333
 

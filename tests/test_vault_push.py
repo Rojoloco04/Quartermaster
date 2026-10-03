@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from quartermaster.schedule import PUSH_TASK, build_tasks
-from quartermaster.vault_push import run_push, summarize
+from quartermaster.ops.schedule import PUSH_TASK, build_tasks
+from quartermaster.ops.vault_push import run_push, summarize
 
 
 def git(cwd: Path, *args: str) -> str:

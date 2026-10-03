@@ -7,7 +7,8 @@ import pytest
 from starlette.testclient import TestClient
 
 from quartermaster.config import DEFAULTS, Settings
-from quartermaster.surfaces import brain, web
+from quartermaster.web import brain
+from quartermaster import web
 
 NOW = 1_790_000_000.0
 

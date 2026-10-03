@@ -7,9 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from quartermaster import agent, procs, reconcile
+from quartermaster import agent
+from quartermaster.ops import procs
+from quartermaster.knowledge import reconcile
 from quartermaster.config import DEFAULTS, Settings
-from quartermaster.schedule import RECONCILE_TASK, build_tasks
+from quartermaster.ops.schedule import RECONCILE_TASK, build_tasks
 
 
 @pytest.fixture
@@ -99,7 +101,7 @@ def test_run_applies_asks_and_dms(settings, monkeypatch):
     # Only Discord itself is faked: the real send_dm runs its own event loop, and
     # called straight from the async reconcile it failed every morning it had news.
     monkeypatch.setattr(agent, "ask", fake_ask)
-    monkeypatch.setattr("quartermaster.surfaces.digest_send._send", fake_send)
+    monkeypatch.setattr("quartermaster.discord_bot.send._send", fake_send)
     monkeypatch.setattr(Settings, "require", lambda self, *names: None)
     assert "Do you already have tickets" in reconcile.run_reconcile(settings, dry_run=True)
     assert sent == [] and not reconcile.conflicts_path(settings).exists()
@@ -112,7 +114,7 @@ def test_run_from_chat_returns_conflicts_without_a_dm(settings, monkeypatch):
         return agent.Reply(text="", structured={"edits": [], "conflicts": [CONFLICT]})
 
     monkeypatch.setattr(agent, "ask", fake_ask)
-    monkeypatch.setattr("quartermaster.surfaces.digest_send.send_dm", lambda s, text: pytest.fail("sent a DM"))
+    monkeypatch.setattr("quartermaster.discord_bot.send.send_dm", lambda s, text: pytest.fail("sent a DM"))
     result = asyncio.run(reconcile.reconcile(settings, notify=False))
     assert "Do you already have tickets" in result
     assert "Do you already have tickets" in reconcile.conflicts_path(settings).read_text(encoding="utf-8")
@@ -123,7 +125,7 @@ def test_quiet_when_consistent(settings, monkeypatch):
         return agent.Reply(text="", structured={"edits": [], "conflicts": []})
 
     monkeypatch.setattr(agent, "ask", fake_ask)
-    monkeypatch.setattr("quartermaster.surfaces.digest_send.send_dm", lambda s, text: pytest.fail("sent a DM"))
+    monkeypatch.setattr("quartermaster.discord_bot.send.send_dm", lambda s, text: pytest.fail("sent a DM"))
     assert "nothing sent" in reconcile.run_reconcile(settings)
 
 

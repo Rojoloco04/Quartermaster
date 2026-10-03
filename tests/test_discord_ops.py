@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from quartermaster.discord_ops import (
+from quartermaster.discord_bot.plans import (
     HARD_LIMIT,
     MAX_BAN_DELETE_DAYS,
     MAX_TIMEOUT_MINUTES,
@@ -457,13 +457,13 @@ class TestActionClasses:
 
     def test_voice_mute_is_not_a_timeout(self):
         # Different Discord operation, different permission, different scope.
-        from quartermaster.discord_ops import REQUIRED_PERMISSION
+        from quartermaster.discord_bot.plans import REQUIRED_PERMISSION
 
         assert REQUIRED_PERMISSION["voice_mute"] == "mute_members"
         assert REQUIRED_PERMISSION["timeout"] == "moderate_members"
 
     def test_expressive_actions_require_only_their_own_permission(self):
-        from quartermaster.discord_ops import REQUIRED_PERMISSION
+        from quartermaster.discord_bot.plans import REQUIRED_PERMISSION
 
         assert REQUIRED_PERMISSION["react"] == "add_reactions"
         assert REQUIRED_PERMISSION["say"] == "send_messages"
@@ -471,7 +471,7 @@ class TestActionClasses:
         assert REQUIRED_PERMISSION["unreact"] == "manage_messages"
 
     def test_voice_duration_is_capped(self):
-        from quartermaster.discord_ops import MAX_VOICE_DURATION_SECONDS
+        from quartermaster.discord_bot.plans import MAX_VOICE_DURATION_SECONDS
 
         plan = OpsPlan.from_json(
             '{"action":"voice_mute","target_user":"dave","duration_seconds":999999}'

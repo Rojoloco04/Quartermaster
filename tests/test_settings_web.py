@@ -7,7 +7,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from quartermaster.config import DEFAULTS, Settings
-from quartermaster.surfaces import web
+from quartermaster import web
 
 
 @pytest.fixture

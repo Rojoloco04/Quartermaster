@@ -7,8 +7,9 @@ import pytest
 from starlette.testclient import TestClient
 
 from quartermaster.config import DEFAULTS, Settings
-from quartermaster.integrations import game_servers, minecraft
-from quartermaster.surfaces import web
+from quartermaster import games
+from quartermaster.games import minecraft
+from quartermaster import web
 
 
 @pytest.fixture
@@ -35,7 +36,7 @@ def csrf_of(html: str) -> str:
 def test_every_game_gets_a_tab_and_the_nav_links_it(client):
     html = client.get("/servers").text
     assert "Running (Paper 26.2)" in html
-    for game in game_servers.GAMES.values():
+    for game in games.GAMES.values():
         assert f"href='/servers/{game.key}'" in html
     assert 'href="/servers"' in client.get("/").text
 

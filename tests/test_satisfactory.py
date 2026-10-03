@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 
 from quartermaster.config import Settings
-from quartermaster.integrations import satisfactory
-from quartermaster.integrations.satisfactory import (
+from quartermaster.games import satisfactory
+from quartermaster.games.satisfactory import (
     ApiError,
     SatisfactoryError,
     Unreachable,
@@ -183,9 +183,9 @@ def test_launch_command():
 
 
 def test_startup_chatter_is_hidden_from_the_page():
-    from quartermaster.integrations import game_servers
+    from quartermaster import games
 
-    game = game_servers.GAMES["satisfactory"]
+    game = games.GAMES["satisfactory"]
     text = ("[2026.09.22-23.21.16:618][  0]LogStaticMesh: Display: Building static mesh X\n"
             "[2026.09.22-23.21.16:795][  0]LogServer: Display: Server API listening on [::]:7777\n")
-    assert game_servers.clean_console(game, text) == text.splitlines(keepends=True)[1]
+    assert games.clean_console(game, text) == text.splitlines(keepends=True)[1]

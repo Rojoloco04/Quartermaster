@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from quartermaster.config import Settings
-from quartermaster.schedule import DIGEST_TASK, RETIRED_TASKS, SYNC_HOUR, SYNC_TASK, TASKS, build_tasks
+from quartermaster.ops.schedule import DIGEST_TASK, RETIRED_TASKS, SYNC_HOUR, SYNC_TASK, TASKS, build_tasks
 
 
 @pytest.fixture
@@ -61,7 +61,7 @@ class TestBuildTasks:
 def test_service_task_runs_windowless_forever_and_once():
     import xml.etree.ElementTree as ET
 
-    from quartermaster.schedule import service_xml
+    from quartermaster.ops.schedule import service_xml
 
     xml = service_xml(r"DESK&TOP\you", r"C:\q\.venv\Scripts\pythonw.exe", r"C:\q")
     ns = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
