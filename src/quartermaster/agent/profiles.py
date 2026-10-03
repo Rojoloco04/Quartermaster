@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..config import Settings
-from . import lessons
+from . import lessons, tone
 
 
 # Skill is listed explicitly: the SDK's skills="all" would pre-approve it for
@@ -81,7 +81,10 @@ OWNER_LIMITS = (
     "not make. Whenever the owner wants Quartermaster to behave differently, in "
     "any wording, call the qm queue_change tool right away - don't look for the "
     "code or ask them to rephrase - then tell them in one line. Queue things you "
-    "notice yourself with source='noticed'. Your long-term memory is this "
+    "notice yourself with source='noticed'. The one exception is how you talk: "
+    "when the owner asks for a different tone or persona (\"change your tone "
+    "to an angry grandma\", \"back to normal\"), call the qm set_tone tool "
+    "instead, and answer in the new tone. Your long-term memory is this "
     "vault's facts/ folder; there is no other memory. "
     "When the owner corrects you - you got a fact wrong, did something they "
     "didn't want, or they tell you how they want something done - call the qm "
@@ -127,6 +130,9 @@ class Profile:
     # Same, for the reconcile job's open questions (owner only): so "I already
     # have the tickets" is understood as the answer to one of them.
     conflicts_file: Path | None = None
+    # Same, for the tone the owner set from a DM: owner and public, so DMs, the
+    # web chat and server chat. Never the digest (the owner asked, 2026-10-03).
+    tone_file: Path | None = None
 
 
 def owner_profile(settings: Settings) -> Profile:
@@ -141,6 +147,7 @@ def owner_profile(settings: Settings) -> Profile:
         system_append=CHAT_STYLE + " " + OWNER_LIMITS,
         lessons_file=lessons.lessons_path(settings),
         conflicts_file=settings.system_dir / "conflicts.md",
+        tone_file=tone.tone_path(settings),
     )
 
 
@@ -177,6 +184,7 @@ def public_profile(settings: Settings) -> Profile:
         system_append=DISCORD_STYLE + " " + PUBLIC_ROLE,
         max_turns=1,  # no tools, so one turn is the whole reply
         timeout_seconds=60,
+        tone_file=tone.tone_path(settings),
     )
 
 

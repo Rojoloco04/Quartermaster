@@ -195,3 +195,11 @@ def test_a_non_owner_dm_is_ignored(bot):
     msg = DM()
     msg.channel = discord_bot.discord.DMChannel.__new__(discord_bot.discord.DMChannel)
     assert bot._route(msg) is None
+
+
+def test_the_status_preference_becomes_the_bots_custom_status(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(discord_bot, "current_prefs", lambda s: s.prefs)
+    on = discord_bot.Quartermaster(Settings(vault=tmp_path, discord_owner_id=1, prefs={"public": {"status": "Mention me"}}))
+    assert on._connection._activity == {"type": 4, "state": "Mention me", "name": "Custom Status"}
+    off = discord_bot.Quartermaster(Settings(vault=tmp_path, discord_owner_id=1, prefs={"public": {"status": " "}}))
+    assert off._connection._activity is None

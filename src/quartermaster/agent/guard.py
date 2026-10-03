@@ -27,7 +27,10 @@ _PROTECTED = (".claude", ".mcp.json", ".git", ".githooks",
               # Who may control the Minecraft server from Discord. Written only
               # by a link proven in-game (or the owner by hand in /settings):
               # an email must not be able to talk the agent into adding one.
-              "System/minecraft-links.md")
+              "System/minecraft-links.md",
+              # How the bot talks in friends' channels too. Written only by the
+              # qm server's set_tone tool, on the owner's own words.
+              "System/tone.md")
 
 
 def check_tool(profile: Profile, tool: str, tool_input: dict) -> str | None:

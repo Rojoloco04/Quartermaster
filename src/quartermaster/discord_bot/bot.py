@@ -169,7 +169,12 @@ class Quartermaster(discord.Client):
         # Nothing the bot sends pings anyone unless a call opts in (moderation's
         # `say`). A model reply, or a preview quoting someone's message, must
         # never become an @everyone.
-        super().__init__(intents=intents, allowed_mentions=discord.AllowedMentions.none())
+        status = str(current_prefs(settings).get("public", {}).get("status", "")).strip()
+        super().__init__(
+            intents=intents,
+            allowed_mentions=discord.AllowedMentions.none(),
+            activity=discord.CustomActivity(name=status) if status else None,
+        )
         self.settings = settings
         self.moderation_enabled = with_members
         self.owner = agent.owner_profile(settings)

@@ -135,7 +135,7 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
       <h4>Quartermaster (Python)</h4>
       <div class="box core"><b>discord_bot/, web/</b><span>the bot, moderation, qm web, the brain graph</span></div>
       <div class="box core"><b>jobs</b><span>knowledge/ (sync, reconcile, tidy), digest/, ops/ (vault push, game backup)</span></div>
-      <div class="box core"><b>agent/</b><span>profiles, model routing, lessons + conflicts in context</span></div>
+      <div class="box core"><b>agent/</b><span>profiles, model routing, lessons + conflicts + tone in context</span></div>
       <div class="box guard"><b>check_tool hook</b><span>re-checks every tool call and path</span></div>
     </div>
     <div class="lane model">
@@ -143,7 +143,7 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
       <div class="box model"><b>Claude CLI (claude.exe)</b><span>one subprocess per turn, via the Agent SDK</span></div>
       <div class="box model"><b>MCP: google</b><span>Calendar read/write, Gmail read-only</span></div>
       <div class="box model"><b>MCP: microsoft, spotify</b><span>To Do; listening history</span></div>
-      <div class="box model"><b>MCP: qm</b><span>Claude page, Notion proposals, sync, reconcile, dev queue, lessons, Minecraft, Satisfactory</span></div>
+      <div class="box model"><b>MCP: qm</b><span>Claude page, Notion proposals, sync, reconcile, dev queue, lessons, tone, Minecraft, Satisfactory</span></div>
     </div>
     <div class="lane store">
       <h4>Where things live</h4>
@@ -214,6 +214,7 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
         <li><b>Notion</b> → pulled one way into <code>notion/</code> daily or on request; pages deleted in Notion leave the mirror. Never edited in the vault.</li>
         <li><b>Conversation</b> → the agent writes <code>facts/</code> (about you, plans, interests).</li>
         <li><b>Corrections</b> → <code>record_lesson</code> adds a rule to <code>facts/lessons.md</code>, read into every reply and digest.</li>
+        <li><b>Tone</b> → <code>set_tone</code> rewrites <code>System/tone.md</code>, read into every DM, web chat and server reply (not the digest).</li>
         <li><b>The Claude page</b> in Notion is the agent's own; it writes there freely.</li>
       </ul>
     </div>
@@ -256,7 +257,7 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
 <section>
   <h3>Module map</h3>
   <div class="mods">
-    <div class="mod"><code>agent/</code><span>profiles, check_tool (guard), one turn, lessons</span></div>
+    <div class="mod"><code>agent/</code><span>profiles, check_tool (guard), one turn, lessons, tone</span></div>
     <div class="mod"><code>cli.py</code><span>every <code>qm</code> command</span></div>
     <div class="mod"><code>config.py</code><span>.env secrets, vault config.toml preferences</span></div>
     <div class="mod"><code>db.py</code><span>state.db: counts and observations, rebuildable, pruned daily</span></div>

@@ -27,7 +27,7 @@ log = logging.getLogger(__name__)
 # next sync overwrites it; edit in Notion), and not digests or the inbox.
 
 EDITABLE = ("CLAUDE.md", "System/config.toml", "System/muted.md", "System/dev-queue.md",
-            "System/conflicts.md", "System/minecraft-links.md")
+            "System/conflicts.md", "System/minecraft-links.md", "System/tone.md")
 _FACT = re.compile(r"facts/[\w.-]+\.md")
 
 
@@ -326,6 +326,7 @@ are edited in Notion: the mirror is overwritten on every sync.</p></section>
 {file_block(vault, "System/config.toml", "Edit preferences", "The whole file, for lists like the distance bands. Saved only if it parses.")}</section>
 <section><h2>Conflicts</h2>{file_block(vault, "System/conflicts.md", "Where what it knows disagrees", "Found by the daily reconcile (<code>qm reconcile</code>). Answer in a DM and every file gets updated, or fix it yourself and delete the entry.")}</section>
 <section><h2>What it knows</h2>{fact_blocks}</section>
+<section><h2>Tone</h2>{file_block(vault, "System/tone.md", "How it talks", "In DMs, the web chat and server channels; not the digest. Set from a DM (\"change your tone to an angry grandma\", \"back to normal\"). Swearing is always allowed.")}</section>
 <section><h2>Instructions</h2>{file_block(vault, "CLAUDE.md", "How the agent works in your vault", "Loaded at the start of every conversation and into every digest.")}</section>
 <div class="grid2">
 <section><h2>Mutes</h2>{file_block(vault, "System/muted.md", "Never raise these again", "One <code>kind:key</code> per line. <code>artist/Tool</code> with no kind mutes every kind.")}</section>

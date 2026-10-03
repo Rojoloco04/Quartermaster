@@ -26,7 +26,8 @@ The vault's system folder is `System/` (was `90-System/` until 2026-09-22).
   it adds nothing until Spotify scrobbling fills it. Spotify stays until then
   (queued: remove it once Last.fm can replace it).
 - Not yet exercised live: `record_lesson` (correct the bot in a DM, check
-  `facts/lessons.md`), `update_event` from a DM, and Minecraft started from a
+  `facts/lessons.md`), `set_tone` (2026-10-03; a DM, then a guild mention in
+  the new tone), `update_event` from a DM, and Minecraft started from a
   DM since the WMI launch (a terminal
   `qm minecraft start` via WMI outlived its command and answered RCON,
   2026-09-22), plus joining over Tailscale and the channel link flow.
@@ -39,6 +40,15 @@ The vault's system folder is `System/` (was `90-System/` until 2026-09-22).
 `record_lesson` when corrected; a dated line lands in `facts/lessons.md`, and
 `Profile.lessons_file` appends that file to the system prompt of every owner
 turn and digest, read fresh each turn so the bot needs no restart.
+
+**Tone** (`agent/tone.py`): "change your tone to X" in a DM makes the owner
+agent call the `qm` server's `set_tone` (`OWNER_LIMITS` exempts it from
+queue_change), which overwrites `System/tone.md`; empty resets.
+`Profile.tone_file` (owner and public: DMs, web chat and guild chat; never the
+digest, by the owner's wish) appends it to the system prompt, read fresh each
+turn. Changing it rewrites the owner's prompt cache once. The block always says swearing is fine, tone or not (the owner
+asked, 2026-10-03); slurs were not enabled. On `_PROTECTED`: it shapes what
+friends see, so only the tool (or /settings) writes it.
 
 **Keeping knowledge consistent.** Two layers. Immediately: `OWNER_LIMITS` tells
 the owner agent that when a fact changes it greps `facts/` and fixes every

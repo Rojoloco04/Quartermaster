@@ -87,6 +87,8 @@ DEFAULTS: dict = {
         # replying, so it can follow the conversation (also capped at ~5000
         # characters). 0 = none.
         "context_messages": 25,
+        # The bot's custom status under its name. Read at startup; blank = none.
+        "status": "Mention me to chat",
     },
     "minecraft": {
         # Heap for the Paper server. The owner plays on the same machine, so

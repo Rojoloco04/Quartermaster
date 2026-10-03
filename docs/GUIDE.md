@@ -22,6 +22,10 @@ with `claude --continue`. The **Chat** page in `qm web`
   things it notices on its own too, marked "(noticed)". When you have Claude
   usage to spare, open Claude Code in the Quartermaster repo and say "work the
   dev queue" (`qm queue` prints the list). Nothing works the queue on its own.
+- Change how it talks in plain words: "change your tone to an angry grandma",
+  "be more sarcastic", "back to normal". It applies from the next reply, in DMs,
+  the web chat and your server's channels (only you can set it); the digest
+  keeps its normal format. Swearing is always allowed. The tone is `System/tone.md`, also editable on the Settings page.
 - It answers with Sonnet. Start a message with `opus:` (hard questions) or
   `haiku:` to use another model for that one message.
 - After 5 minutes with nothing said, your next message starts a fresh
@@ -109,6 +113,10 @@ anything, and each person gets `public.replies_per_hour` replies an hour
 `public.context_messages` messages (default 25, about 5000 characters at most) before
 replying, so "is he spitting fire?" works without explaining who "he" is. Set it
 to 0 to turn that off.
+
+The line under the bot's name is `public.status` (default "Mention me to chat",
+blank for none; takes effect on `qm restart`). Its About Me and avatar are set
+once in the Discord Developer Portal, not here.
 
 ## Minecraft
 

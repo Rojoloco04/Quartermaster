@@ -26,7 +26,7 @@ from claude_agent_sdk import (
     UserMessage,
 )
 
-from . import lessons
+from . import lessons, tone
 from .guard import _guard
 from .profiles import NEVER_OVER_CHAT, Profile
 
@@ -120,6 +120,7 @@ def _options(profile: Profile, prompt: str = "", cli_path: str | None = None) ->
         profile.system_append,
         lessons.for_prompt(profile.lessons_file),
         reconcile.for_prompt(profile.conflicts_file),
+        tone.for_prompt(profile.tone_file),
     ) if p)
     return ClaudeAgentOptions(
         cwd=str(profile.cwd),

@@ -59,6 +59,7 @@ ignore_calendar = []      # all-day entries with these in the title are reminder
 [public]
 replies_per_hour = 20     # when people in your server just talk to the bot; spends your subscription
 context_messages = 25     # recent channel messages it reads before replying (max ~5000 chars); 0 = none
+status = "Mention me to chat"  # shown under the bot's name; needs a restart; "" = none
 
 [minecraft]
 memory_gb = 4             # heap for the Paper server; you play on the same machine
