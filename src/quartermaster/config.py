@@ -32,15 +32,15 @@ DEFAULTS: dict = {
         "latitude": 38.6270,
         "longitude": -90.1994,
     },
-    # Distance bands for the events section. Each is queried separately: it
-    # sets the bar for inclusion, and keeps each query under Ticketmaster's
-    # 1000-result deep-paging cap.
+    # Distance bands for the events section, each queried separately. "bar"
+    # is how good an event must be for the model to pick it (low/medium/high);
+    # "max_offered" caps how many new shows it sees per day (default 60);
+    # "taste_only" offers only events matching a top artist, interests.md or a
+    # genre named there; "classification" narrows the query (e.g. "music").
     "events": {
         "bands": [
-            {"name": "local", "min_miles": 0, "max_miles": 60, "bar": "low"},
-            {"name": "day_trip", "min_miles": 60, "max_miles": 250, "bar": "medium"},
-            # Music only: 500 miles holds ~8,500 events a month, mostly not worth a trip.
-            {"name": "weekend", "min_miles": 250, "max_miles": 500, "bar": "high", "classification": "music"},
+            {"name": "local", "min_miles": 0, "max_miles": 100, "bar": "low", "max_offered": 300},
+            {"name": "travel", "min_miles": 100, "max_miles": 500, "bar": "high", "taste_only": True},
         ],
         # How far ahead to look for events worth travelling to. Longer than
         # the calendar window on purpose - a show worth planning a trip
@@ -78,6 +78,9 @@ DEFAULTS: dict = {
         # All-day calendar entries whose title contains any of these
         # (case-insensitive) are left out: reminders, not plans.
         "ignore_calendar": [],
+        # Archived digests (digests/*.md and .json) older than this are
+        # deleted when a new one is archived; git history keeps them. 0 = keep all.
+        "keep_days": 30,
     },
     "public": {
         # Replies per person per rolling hour when people in the server just

@@ -26,8 +26,8 @@ HEADER = """# Dev queue
 Changes to Quartermaster's own code. Ask for one in a DM in any words, or the
 agent adds what it notices. `(you)` = you asked; `(noticed)` = the agent's own
 idea: evaluate those, don't just do them. To work through the list, open Claude
-Code in the Quartermaster repo and say "work the dev queue". Mark items `[x]`
-when done.
+Code in the Quartermaster repo and say "work the dev queue". A finished item
+is deleted (the vault's git history keeps it).
 
 """
 

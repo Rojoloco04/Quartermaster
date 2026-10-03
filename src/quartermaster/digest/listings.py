@@ -9,7 +9,7 @@ An item is a plain dict - the digest's JSON - whose listing fields are the
 ``db.listings`` columns of the same names:
 
     {"acts", "title", "first_date", "last_date", "time", "venue", "city",
-     "distance_miles", "band", "bar", "onsale_at", "presale",
+     "segment", "genres", "distance_miles", "band", "bar", "onsale_at", "presale",
      "listings": [{"id", "label", "url"}], "why", "reminder"}
 """
 
@@ -146,6 +146,8 @@ def item(members: list[dict]) -> dict:
         "time": first.get("local_time") or "",
         "venue": first.get("venue") or "",
         "city": first.get("city") or "",
+        "segment": first.get("segment") or "",
+        "genres": first.get("genres") or [],
         "distance_miles": first.get("distance_miles"),
         "band": first.get("band"),
         "bar": first.get("bar"),

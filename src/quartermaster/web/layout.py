@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import html
 import re
+from datetime import datetime
 
 
 _LINK = re.compile(r"\[([^\]]+)\]\(([^)\s]+)\)")
@@ -87,7 +88,56 @@ pre { padding:10px; overflow:auto; white-space:pre-wrap; word-break:break-word; 
 #log { height:420px } .msg { padding:6px 0; border-bottom:1px solid var(--line) }
 .msg .who { font-weight:600 } .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:16px }
 @media (max-width: 800px) { .grid2 { grid-template-columns:1fr } main { padding:12px } }
+td.nw, th { white-space:nowrap } td.grow { width:100%; overflow-wrap:anywhere }
+time[title] { cursor:help }
+details.clip > summary { cursor:pointer; list-style:none }
+details.clip > summary::-webkit-details-marker { display:none }
+details.clip > summary::after { content:"more"; color:var(--accent); font-size:12px; margin-left:6px }
+details.clip[open] > summary .short { display:none }
+details.clip[open] > summary::after { content:"less"; margin-left:0 }
+details.clip .full { white-space:pre-wrap; overflow-wrap:anywhere }
 """
+
+# Sections with an id and ``data-live`` are re-fetched from the same URL every
+# LIVE_SECONDS and swapped in when the server's copy changed, so a page left
+# open stays current. A section being used is left alone: focus or a text
+# selection inside it, or an open editor. Open "more" toggles stay open.
+# Paused while the tab is hidden or ``window.qmBusy`` is set (a chat reply
+# streaming in); refreshes at once when the tab comes back.
+LIVE_SECONDS = 15
+LIVE_JS = """
+(() => {
+  const served = new WeakMap(), live = () => [...document.querySelectorAll('[data-live][id]')];
+  if (!live().length) return;
+  live().forEach(el => served.set(el, el.outerHTML));
+  const inUse = el => (el.contains(document.activeElement) && document.activeElement !== document.body)
+    || (getSelection().toString() && el.contains(getSelection().anchorNode))
+    || [...el.querySelectorAll('.editor')].some(e => !e.hidden);
+  async function refresh() {
+    if (document.hidden || window.qmBusy) return;
+    let doc;
+    try {
+      const r = await fetch(location.href, {cache: 'no-store'});
+      if (!r.ok) return;
+      doc = new DOMParser().parseFromString(await r.text(), 'text/html');
+    } catch (e) { return; }
+    const stick = innerHeight + scrollY >= document.body.scrollHeight - 40;
+    for (const el of live()) {
+      const fresh = doc.getElementById(el.id);
+      if (!fresh || fresh.outerHTML === served.get(el) || inUse(el)) continue;
+      const open = new Set([...el.querySelectorAll('details[open] > summary')].map(s => s.textContent));
+      for (const a of [...el.attributes]) if (!fresh.hasAttribute(a.name)) el.removeAttribute(a.name);
+      for (const a of fresh.attributes) el.setAttribute(a.name, a.value);
+      el.innerHTML = fresh.innerHTML;  // the same element: scripts holding it keep working
+      el.querySelectorAll('details > summary').forEach(s => { if (open.has(s.textContent)) s.parentElement.open = true; });
+      served.set(el, fresh.outerHTML);
+      if (stick && el.hasAttribute('data-live-stick')) scrollTo(0, document.body.scrollHeight);
+    }
+  }
+  setInterval(refresh, LIVE_MS);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+})();
+""".replace("LIVE_MS", str(LIVE_SECONDS * 1000))
 
 LOG_JS = """
 let pos = -20000; const el = document.getElementById('log');
@@ -109,6 +159,43 @@ def _e(value: object) -> str:
     return html.escape(str(value))
 
 
+def clip(text: object, limit: int = 120, full_html: str | None = None) -> str:
+    """Text that may be long: up to ``limit`` characters of its first line, with
+    a "more" toggle that shows all of it. ``full_html`` is what the toggle
+    shows instead of the escaped text (rendered markdown, a <pre>)."""
+    text = str(text)
+    if len(text) <= limit and "\n" not in text.strip():
+        return full_html if full_html is not None else _e(text)
+    short = text.strip().split("\n", 1)[0][:limit].rstrip()
+    full = full_html if full_html is not None else f"<div class='full'>{_e(text)}</div>"
+    return f"<details class='clip'><summary><span class='short'>{_e(short)}…</span></summary>{full}</details>"
+
+
+_TIME_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%m/%d/%Y %I:%M:%S %p")
+
+
+def short_time(text: str, now: datetime | None = None) -> str:
+    """"today 7:00 am", "tomorrow 3:00 am", "Sep 27 9:00 am" from a log or
+    Task Scheduler timestamp; anything else ("never", "N/A") as it is."""
+    for fmt in _TIME_FORMATS:
+        try:
+            when = datetime.strptime(text.strip(), fmt)
+            break
+        except ValueError:
+            continue
+    else:
+        return text
+    days = (when.date() - (now or datetime.now()).date()).days
+    day = {0: "today", 1: "tomorrow", -1: "yesterday"}.get(days, f"{when:%b} {when.day}")
+    return f"{day} {when.hour % 12 or 12}:{when.minute:02d} {'am' if when.hour < 12 else 'pm'}"
+
+
+def time_html(text: str) -> str:
+    """``short_time`` with the full timestamp on hover."""
+    short = short_time(text)
+    return _e(short) if short == text else f"<time title='{_e(text)}'>{_e(short)}</time>"
+
+
 # One nav for every page, the standalone architecture page included (it is
 # served with its own copy swapped for this one, so the two can't drift).
 NAV = ('<nav><a href="/">Dashboard</a><a href="/chat">Chat</a><a href="/brain">Brain</a><a href="/servers">Servers</a>'
@@ -120,4 +207,4 @@ def page(title: str, body: str, script: str = "", css: str = "", csrf: str = "")
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>{_e(title)}</title>
 <meta name="qm-csrf" content="{_e(csrf)}"><style>{CSS}{css}</style></head><body><header><h1>Quartermaster</h1>
 {NAV}</header><main>{body}</main>
-<script>{script}</script></body></html>"""
+<script>{script}</script><script>{LIVE_JS}</script></body></html>"""

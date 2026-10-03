@@ -57,8 +57,8 @@ class Reply:
 # Model IDs, not aliases ("sonnet", "opus", ...) - deterministic regardless
 # of what an alias currently resolves to for this CLI install.
 HAIKU = "claude-haiku-4-5"
-SONNET = "claude-sonnet-5"
-OPUS = "claude-opus-5"
+SONNET = "claude-sonnet-5-5"
+OPUS = "claude-opus-5-5"
 
 # Thinking depth for every Sonnet/Opus turn. Chat, a digest and a reconcile
 # are not hard reasoning; "opus:" is there when one is.

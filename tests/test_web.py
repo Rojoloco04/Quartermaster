@@ -105,3 +105,39 @@ def test_service_line_says_how_the_bot_is_kept_running():
     up = web.service_line({"last_run": "9/22/2026 5:15:33 PM", "last_result": "running"})
     assert "restarts if it crashes" in up and "5:15:33 PM" in up
     assert "qm restart" in web.service_line({"last_run": "9/22/2026 5:15:33 PM", "last_result": "1"})
+
+
+def test_times_read_short_with_the_full_one_on_hover():
+    from datetime import datetime
+    from quartermaster.web.layout import short_time, time_html
+    now = datetime(2026, 10, 3, 12, 0)
+    assert short_time("2026-10-03 12:37:52", now) == "today 12:37 pm"
+    assert short_time("10/4/2026 3:00:00 AM", now) == "tomorrow 3:00 am"
+    assert short_time("9/27/2026 9:00:00 AM", now) == "Sep 27 9:00 am"
+    assert short_time("never", now) == "never" and time_html("N/A") == "N/A"
+    assert "title='10/4/2026 3:00:00 AM'" in time_html("10/4/2026 3:00:00 AM")
+
+
+def test_long_text_is_clipped_behind_a_toggle_and_short_text_is_not():
+    from quartermaster.web.layout import clip
+    assert clip("short <b>", 20) == "short &lt;b&gt;"
+    long = clip("x" * 50 + "<i>", 20)
+    assert long.startswith("<details class='clip'>") and "x" * 20 + "…" in long and "&lt;i&gt;" in long
+    assert "<details" in clip("one line\nsecond line", 100)  # a second line is hidden too
+    assert clip("y" * 30, 10, "<pre>all</pre>").endswith("<pre>all</pre></details>")
+
+
+def test_model_names_and_job_results_read_plainly():
+    assert web.dashboard_view.model_name("claude-sonnet-5-5") == "sonnet 5.5"
+    assert web.dashboard_view.model_name("claude-opus-5") == "opus 5"
+    assert web.dashboard_view.job_result("0") == "ok" and web.dashboard_view.job_result("1") == "failed (1)"
+    assert web.dashboard_view.job_result("") == ""
+
+
+def test_pages_mark_their_live_sections(settings, monkeypatch):
+    monkeypatch.setattr(web.dashboard_view.schedule, "task_info", lambda: [])
+    html = web.dashboard(settings)
+    for section in ("bot", "jobs", "turns", "convo", "digests", "muted"):
+        assert f'id="{section}" data-live' in html
+    assert 'id="log"' in html and 'id="log" data-live' not in html  # the log tails itself
+    assert "qmBusy" in html  # the live-refresh script rides on every page

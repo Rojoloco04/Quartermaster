@@ -70,8 +70,10 @@ def build_app(settings: Settings, token: str | None = None, hosts: tuple[str, ..
             return response
         return wrapper
 
+    # Pages are rendered in a thread: the dashboard runs schtasks and reads the
+    # log, and every open page re-fetches itself (layout.LIVE_JS).
     async def index(request: Request):
-        return HTMLResponse(dashboard(settings))
+        return HTMLResponse(await asyncio.to_thread(dashboard, settings))
 
     async def api_log(request: Request):
         pos, text = read_log_from(settings.log_path, int(request.query_params.get("pos", -20000)))
@@ -104,7 +106,7 @@ def build_app(settings: Settings, token: str | None = None, hosts: tuple[str, ..
         return HTMLResponse(page("Brain", brain.BODY, EDIT_JS + brain.JS, EDIT_CSS + brain.CSS, csrf))
 
     async def settings_view(request: Request):
-        return HTMLResponse(settings_page(settings, csrf))
+        return HTMLResponse(await asyncio.to_thread(settings_page, settings, csrf))
 
     async def api_file_save(request: Request):
         if not secrets.compare_digest(request.headers.get("x-qm-csrf", ""), csrf):
@@ -133,7 +135,7 @@ def build_app(settings: Settings, token: str | None = None, hosts: tuple[str, ..
         return JSONResponse({"hash": new_hash})
 
     async def chat_view(request: Request):
-        return HTMLResponse(chat_page(settings, csrf))
+        return HTMLResponse(await asyncio.to_thread(chat_page, settings, csrf))
 
     # --- Game servers: status, start/stop, console. Each call can block (RCON,
     # tasklist, a 60s stop), so they run off the event loop.

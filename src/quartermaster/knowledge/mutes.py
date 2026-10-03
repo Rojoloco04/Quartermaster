@@ -35,6 +35,13 @@ to silence everything about Tool: events and on-sales alike.
 
 # - `stale:abc123` — Some page title — muted 2026-09-21 — "reason"
 _LINE = re.compile(r"^\s*-\s+`([^`]+)`(.*)$")
+# Notion writes the same id with or without dashes (state.db keeps it bare, a URL or
+# the API dashes it), so ids are compared bare.
+_UUID = re.compile(r"\b([0-9a-f]{8})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{12})\b")
+
+
+def _norm(item_id: str) -> str:
+    return _UUID.sub(lambda m: "".join(m.groups()), item_id.lower())
 
 
 @dataclass(frozen=True)
@@ -67,12 +74,13 @@ def is_muted(item_id: str, mutes: list[Mute]) -> bool:
     muting ``event:artist/Tool`` also silences ``event:artist/Tool/2026-11-02``.
     A mute with no ``kind:`` prefix covers every kind: ``artist/Tool`` silences
     both the digest's events and its on-sales. Case-insensitive, since
-    a mute is typed by a person and Ticketmaster's casing isn't predictable.
+    a mute is typed by a person and Ticketmaster's casing isn't predictable,
+    and blind to the dashes in a Notion id.
     """
-    item = item_id.lower()
+    item = _norm(item_id)
     bare = item.split(":", 1)[1] if ":" in item else item
     for mute in mutes:
-        scope = mute.item_id.lower()
+        scope = _norm(mute.item_id)
         candidate = item if ":" in scope else bare
         if candidate == scope or candidate.startswith(scope + "/"):
             return True

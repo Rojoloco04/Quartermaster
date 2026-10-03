@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 SCHEMA = """
 -- One row per mirrored Notion page. Lets the daily pull skip unchanged pages
@@ -75,12 +75,15 @@ CREATE TABLE IF NOT EXISTS listings (
     local_time        TEXT,               -- HH:MM, '' when not announced
     venue             TEXT,
     city              TEXT,
+    segment           TEXT,               -- Ticketmaster's: Music, Sports, Arts & Theatre...
+    genres            TEXT,               -- JSON list: genre, then subgenre ("Hip-Hop/Rap", "Trap")
     distance_miles    REAL,
     url               TEXT,
     onsale_at         TEXT,               -- public on-sale, UTC ISO
     presales          TEXT NOT NULL,      -- JSON list of {name, starts_at}
     first_seen        TEXT NOT NULL,
-    considered_at     TEXT,               -- first offered to the model
+    considered_at     TEXT,               -- last offered to the model
+    considered_taste  TEXT,               -- digest.taste.taste_key at that time
     event_shown_at    TEXT,               -- last shown in the events section
     event_times_shown INTEGER NOT NULL DEFAULT 0,
     onsale_shown_at   TEXT                -- shown in "on sale soon"; never again
@@ -111,21 +114,42 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+# How long a connection waits for another's write to finish. The digest
+# commits its observations before its slow parts, so a wait is short.
+BUSY_TIMEOUT_SECONDS = 30
+
+
 def connect(db_path: Path) -> sqlite3.Connection:
-    """Open the database, creating it and its schema if absent."""
+    """Open the database, creating or migrating its schema if it's behind.
+
+    An up-to-date database is opened without writing: the bot opens it every
+    20s, and when every open also wrote ``user_version`` it needed the write
+    lock, so it failed with "database is locked" for as long as a digest held
+    one (2026-10-03)."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=BUSY_TIMEOUT_SECONDS)
     conn.row_factory = sqlite3.Row
-    # WAL keeps the weekly digest job from blocking the always-on bot.
-    conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     version = conn.execute("PRAGMA user_version").fetchone()[0]
-    conn.executescript(SCHEMA)
-    if version < 3:
-        _migrate_to_listings(conn)
-    conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
-    conn.commit()
+    if version < SCHEMA_VERSION:
+        # WAL (kept in the file once set) lets the bot read while a job writes.
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.executescript(SCHEMA)
+        if version < 3:
+            _migrate_to_listings(conn)
+        _add_missing_columns(conn)
+        conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+        conn.commit()
     return conn
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    """v4 added ``segment``, ``genres`` and ``considered_taste`` to listings;
+    ``CREATE TABLE IF NOT EXISTS`` doesn't touch a table that exists."""
+    have = {r[1] for r in conn.execute("PRAGMA table_info(listings)")}
+    for column in ("segment", "genres", "considered_taste"):
+        if column not in have:
+            conn.execute(f"ALTER TABLE listings ADD COLUMN {column} TEXT")
 
 
 def _migrate_to_listings(conn: sqlite3.Connection) -> None:
@@ -206,15 +230,16 @@ def record_price_check(
     )
 
 
-LISTING_FIELDS = ("name", "acts", "local_date", "local_time", "venue", "city", "distance_miles",
-                  "url", "onsale_at", "presales")
+LISTING_FIELDS = ("name", "acts", "local_date", "local_time", "venue", "city", "segment", "genres",
+                  "distance_miles", "url", "onsale_at", "presales")
+_JSON_FIELDS = ("acts", "genres", "presales")
 
 
 def upsert_listing(conn: sqlite3.Connection, listing: dict) -> None:
     """Store what Ticketmaster says now. ``first_seen`` and the shown/considered
-    columns are ours and survive; everything else is refreshed. ``acts`` and
-    ``presales`` are stored as JSON."""
-    values = [json.dumps(listing.get(f) or []) if f in ("acts", "presales") else listing.get(f)
+    columns are ours and survive; everything else is refreshed. ``acts``,
+    ``genres`` and ``presales`` are stored as JSON."""
+    values = [json.dumps(listing.get(f) or []) if f in _JSON_FIELDS else listing.get(f)
               for f in LISTING_FIELDS]
     columns = ", ".join(LISTING_FIELDS)
     # A listing found by the on-sale query carries no distance band; keep the one we had.
@@ -236,19 +261,19 @@ def listings_by_id(conn: sqlite3.Connection, ids: list[str]) -> dict[str, sqlite
     return {row["id"]: row for row in rows}
 
 
-def mark_listings(conn: sqlite3.Connection, ids: list[str], what: str) -> None:
-    """``considered`` (offered to the model), ``event`` (shown in the events
-    section) or ``onsale`` (shown in on-sale soon)."""
+def mark_listings(conn: sqlite3.Connection, ids: list[str], what: str, taste: str = "") -> None:
+    """``considered`` (offered to the model, judging by ``taste``), ``event``
+    (shown in the events section) or ``onsale`` (shown in on-sale soon)."""
     if not ids:
         return
     sets = {
-        "considered": "considered_at = COALESCE(considered_at, :now)",
+        "considered": "considered_at = :now, considered_taste = :taste",
         "event": "event_shown_at = :now, event_times_shown = event_times_shown + 1",
         "onsale": "onsale_shown_at = :now",
     }[what]
     marks = ", ".join(f":id{i}" for i in range(len(ids)))
     conn.execute(f"UPDATE listings SET {sets} WHERE id IN ({marks})",
-                 {"now": utcnow(), **{f"id{i}": v for i, v in enumerate(ids)}})
+                 {"now": utcnow(), "taste": taste, **{f"id{i}": v for i, v in enumerate(ids)}})
 
 
 def reset_digest_marks(conn: sqlite3.Connection) -> dict[str, int]:
@@ -258,7 +283,7 @@ def reset_digest_marks(conn: sqlite3.Connection) -> dict[str, int]:
     and mutes live in the vault, untouched. For testing; it also means the
     next real digest repeats what earlier ones sent."""
     listings = conn.execute(
-        """UPDATE listings SET considered_at = NULL, event_shown_at = NULL,
+        """UPDATE listings SET considered_at = NULL, considered_taste = NULL, event_shown_at = NULL,
                event_times_shown = 0, onsale_shown_at = NULL
            WHERE considered_at IS NOT NULL OR event_shown_at IS NOT NULL OR onsale_shown_at IS NOT NULL"""
     ).rowcount

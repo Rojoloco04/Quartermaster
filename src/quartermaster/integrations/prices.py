@@ -204,6 +204,7 @@ def check_all(settings: Settings, conn: sqlite3.Connection) -> dict:
             ok=result["ok"],
             note=result.get("note", ""),
         )
+        conn.commit()  # don't hold the write lock through the next download
 
         if not result["ok"]:
             failures.append({"item_name": item["name"], "url": item["url"]})

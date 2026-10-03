@@ -3,6 +3,7 @@ Spotify and Last.fm top artists, and facts/interests.md (positives only)."""
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 
@@ -70,3 +71,28 @@ def matches(listing: dict, artists: set[str], interests_text: str) -> bool:
         if name in artists or re.search(rf"(?<!\w){re.escape(name)}(?!\w)", interests_text):
             return True
     return False
+
+
+# Genres too broad to say anything about taste, and words that turn up in
+# ordinary prose: "Japanese pop culture" made every Pop on-sale a match.
+_BROAD_GENRES = {"pop", "rock", "music", "other", "miscellaneous", "family", "undefined"}
+
+
+def matches_genre(listing: dict, interests_text: str) -> bool:
+    """True if Ticketmaster's genre or subgenre is named in interests.md: each
+    "/"-part as a whole word, so "Hip-Hop/Rap" matches "rap" and
+    "Dance/Electronic" matches "edm / electronic". A part inside a hyphenated
+    word doesn't count ("k-pop"), nor does a ``_BROAD_GENRES`` one."""
+    for genre in listing.get("genres") or []:
+        for part in genre.split("/"):
+            word = part.strip().lower()
+            if len(word) > 2 and word not in _BROAD_GENRES and re.search(rf"(?<![\w-]){re.escape(word)}(?![\w-])", interests_text):
+                return True
+    return False
+
+
+def taste_key(interests_text: str) -> str:
+    """A fingerprint of interests.md's positive part. An event the model passed
+    over is offered again once this changes: a show judged before "esports" was
+    added deserves a second look. Top artists aren't in it: they drift daily."""
+    return hashlib.sha256(interests_text.strip().encode("utf-8")).hexdigest()[:12]

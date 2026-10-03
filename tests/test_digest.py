@@ -33,6 +33,16 @@ def test_matches_any_billed_act_and_whole_words_only():
     assert not digest.matches_taste(lst("4", acts=()), {"aespa"}, "k-pop")
 
 
+def test_a_genre_named_in_interests_matches_but_not_inside_a_hyphenated_word():
+    interests = "- music: rap, edm, k-pop\n- edm / electronic\n- soccer: usmnt"
+    assert digest.matches_genre(lst("1", genres=["Hip-Hop/Rap", "Trap"]), interests)
+    assert digest.matches_genre(lst("2", genres=["Dance/Electronic"]), interests)
+    assert not digest.matches_genre(lst("3", genres=["Pop"]), interests)  # only "k-pop"
+    assert not digest.matches_genre(lst("3b", genres=["Rock", "Pop"]), "- anime and japanese pop culture")
+    assert not digest.matches_genre(lst("4", genres=["Rock"]), interests)
+    assert not digest.matches_genre(lst("5"), interests)
+
+
 def test_not_interested_section_never_counts_as_a_match():
     text = "## Confirmed\n- aespa\n\n## Not interested\n- St. Louis Blues games\n\n## Later\n- Tool\n"
     kept = digest.positive_interests(text).lower()
@@ -76,7 +86,7 @@ def test_a_shouted_title_is_tidied_and_the_act_not_repeated():
 
 
 def rows(**by_id) -> dict:
-    base = {"considered_at": None, "event_shown_at": None}
+    base = {"considered_at": None, "considered_taste": "t1", "event_shown_at": None}
     return {i: {**base, **r} for i, r in by_id.items()}
 
 
@@ -90,8 +100,13 @@ def test_new_events_go_to_the_model_once_and_a_shown_one_returns_the_week_of():
                  r={"considered_at": "x", "event_shown_at": "2026-09-25T13:00:00+00:00"},
                  w={"considered_at": "x", "event_shown_at": "2026-10-02T13:00:00+00:00"},
                  f={"considered_at": "x", "event_shown_at": "2026-09-25T13:00:00+00:00"})
-    fresh, reminders = classify_events([new, passed_over, shown_long_ago, shown_this_week, shown_far_off], known, TODAY)
+    groups = [new, passed_over, shown_long_ago, shown_this_week, shown_far_off]
+    fresh, reminders = classify_events(groups, known, TODAY, "t1")
     assert fresh == [new] and reminders == [shown_long_ago]
+
+    # interests.md changed: what was passed over gets a second look; shown stays shown.
+    fresh, _ = classify_events(groups, known, TODAY, "t2")
+    assert fresh == [new, passed_over]
 
 
 def test_calendar_skips_ignored_all_day_entries_but_keeps_real_plans():
@@ -113,7 +128,7 @@ def test_calendar_skips_ignored_all_day_entries_but_keeps_real_plans():
 
 
 def test_render_is_skimmable_and_skips_empty_sections():
-    item = {**listings.item(LCS), "band": "weekend", "why": "you follow LCS"}
+    item = {**listings.item(LCS), "band": "travel", "why": "you follow LCS"}
     text = render({
         "date": "2026-10-03",
         "calendar": {"days": [{"date": "2026-10-03", "events": [
@@ -126,7 +141,7 @@ def test_render_is_skimmable_and_skips_empty_sections():
     assert text.startswith("## Saturday, October 3\n### 📅 Calendar\n**Today** · Dinner at Kasabi (6:30 pm–8:30 pm)")
     assert "**League of Legends** · LCS Summer Finals — *you follow LCS*" in text
     assert "-# Today – Tomorrow · Gas South Arena, St. Louis · 3 mi · [Sat Oct 3](<https://tm/d1>)" in text
-    assert "__Weekend__" in text and "On sale soon" not in text and "Notion" not in text
+    assert "__Travel__" in text and "On sale soon" not in text and "Notion" not in text
     assert "-# Couldn't check: Desk" in text
 
 
@@ -216,11 +231,12 @@ def test_a_matinee_and_an_evening_show_are_labelled_by_time():
 def test_each_band_offers_its_favourites_first_then_the_soonest_and_the_rest_wait():
     soon = [[lst(f"s{i}", acts=("Somebody",), day="2026-10-04")] for i in range(100)]
     fav = [lst("fav", acts=("Tool",), day="2026-10-30")]
-    far = [[{**lst("w1", acts=("Nobody",)), "band": "weekend"}]]
+    far = [[{**lst("w1", acts=("Nobody",)), "band": "travel"}]]
     offered = digest.offer([*soon, fav, *far], lambda e: "Tool" in e["acts"])
     ids = [g[0]["id"] for g in offered]
     assert len(ids) == digest.MAX_OFFERED_PER_BAND + 1
     assert ids[0] == "fav" and "w1" in ids
+    assert len(digest.offer([*soon, fav], lambda e: False, {"local": 300})) == 101
 
 
 def test_without_favourites_a_band_is_offered_across_the_month_not_just_tonight():
@@ -263,3 +279,37 @@ def test_a_test_run_dms_with_a_note_and_marks_nothing_then_reset_forgets_a_real_
         assert db.reset_digest_marks(conn) == {"listings": 2, "surfaced": 0}
         assert db.listings_by_id(conn, ["e1"])["e1"]["first_seen"]  # observations stay
     assert digest.run_digest(settings, dry_run=True) == text
+
+
+def test_archived_digests_older_than_keep_days_are_pruned(tmp_path: Path):
+    for name in ("2026-08-01.md", "2026-08-01.json", "2026-09-10.md", "2026-10-03.md", "notes.md"):
+        (tmp_path / name).write_text("x", encoding="utf-8")
+    removed = digest.prune_archive(tmp_path, 30, today=date(2026, 10, 3))
+    assert sorted(p.name for p in removed) == ["2026-08-01.json", "2026-08-01.md"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["2026-09-10.md", "2026-10-03.md", "notes.md"]
+    assert digest.prune_archive(tmp_path, 0, today=date(2027, 1, 1)) == []
+
+
+def test_a_far_event_reaches_the_model_only_if_it_matches_taste_and_near_genres_make_onsales(settings, monkeypatch):
+    monkeypatch.setattr(digest.ticketmaster, "onsales_between", lambda s, d, n: [
+        lst("o_near", "Rapper", ("Nobody Known",), genres=["Hip-Hop/Rap"], onsale_at="2026-10-10T15:00:00Z"),
+        lst("o_far", "Rapper", ("Nobody Known",), genres=["Hip-Hop/Rap"], distance_miles=300.0,
+            onsale_at="2026-10-10T15:00:00Z")])
+    travel = {"band": "travel", "bar": "high", "distance_miles": 300.0}
+    monkeypatch.setattr(digest.ticketmaster, "events_for_bands", lambda s, n: {
+        "local": [lst("near", acts=("Anyone",))],
+        "travel": [lst("fav", acts=("Tool",), **travel), lst("rap", acts=("X",), genres=["Hip-Hop/Rap"], **travel),
+                   lst("meh", acts=("Y",), genres=["Country"], **travel)]})
+    (settings.facts_dir).mkdir(parents=True, exist_ok=True)
+    (settings.facts_dir / "interests.md").write_text("- Music: rap\n", encoding="utf-8")
+    asked = []
+
+    async def fake_ask(prompt, profile, cli):
+        asked.append(json.loads(prompt.split("Candidates:\n", 1)[1]))
+        return agent.Reply(text="", structured={"picks": []})
+
+    monkeypatch.setattr(agent, "ask", fake_ask)
+    text = digest.run_digest(settings, dry_run=True)
+    assert {c["acts"][0] for c in asked[0]} == {"Anyone", "Tool", "X"}
+    assert next(c for c in asked[0] if c["acts"] == ["X"])["genres"] == ["Hip-Hop/Rap"]
+    assert "On sale soon" in text and text.count("Nobody Known") == 1

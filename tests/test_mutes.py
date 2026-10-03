@@ -60,3 +60,12 @@ def test_kindless_mute_covers_every_kind_and_ignores_case():
     assert mutes.is_muted("presale:artist/Tool/e2", muted)
     assert not mutes.is_muted("event:artist/Toolbox/e3", muted)
     assert not mutes.is_muted("presale:artist/Tool", [mutes.Mute(item_id="event:artist/Tool", note="")])
+
+
+def test_notion_id_matches_with_or_without_dashes():
+    # state.db keeps page ids bare; a mute written from a Notion URL has dashes.
+    dashed = [mutes.Mute(item_id="stale:e6b7c599-fefe-8345-8460-013df85667cf", note="")]
+    assert mutes.is_muted("stale:e6b7c599fefe83458460013df85667cf", dashed)
+    bare = [mutes.Mute(item_id="stale:E6B7C599FEFE83458460013DF85667CF", note="")]
+    assert mutes.is_muted("stale:e6b7c599-fefe-8345-8460-013df85667cf", bare)
+    assert not mutes.is_muted("stale:e6b7c599fefe83458460013df85667c0", dashed)

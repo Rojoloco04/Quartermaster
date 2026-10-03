@@ -7,27 +7,24 @@ geopoint = "9yzg"        # Ticketmaster takes a geohash, not raw lat/long
 latitude = 38.6270
 longitude = -90.1994
 
-# Each band is queried separately. That sets the bar for how interesting an
-# event must be to be worth the distance, and keeps every query under
-# Ticketmaster's 1000-result deep-paging cap.
+# Distance bands for the events section, each queried separately.
+# bar: how good an event must be for the model to pick it (low/medium/high).
+# max_offered: new shows the model sees per day (default 60); the rest wait.
+# taste_only: only events matching a top artist, interests.md, or a genre
+# named there (rap, electronic...) reach the model.
 [[events.bands]]
 name = "local"
 min_miles = 0
-max_miles = 60
-bar = "low"              # a weeknight â€” STL metro
+max_miles = 100
+bar = "low"              # STL metro and a short drive: anything up your street
+max_offered = 300
 
 [[events.bands]]
-name = "day_trip"
-min_miles = 60
-max_miles = 250
-bar = "medium"           # KC, Indy, Memphis, Louisville, Nashville
-
-[[events.bands]]
-name = "weekend"
-min_miles = 250
+name = "travel"
+min_miles = 100
 max_miles = 500
-bar = "high"              # Chicago, Cincinnati, Milwaukee, Tulsa
-classification = "music"  # 500 miles holds ~8,500 events a month; only music is worth the trip
+bar = "high"             # KC, Chicago, Nashville, Memphis, Indy: worth the trip
+taste_only = true
 
 [events]
 window_days = 30          # how far ahead to look for events worth travelling to
@@ -55,6 +52,7 @@ weekday = "sunday"        # also the day it lists wishlist links it couldn't rea
 hour = 8
 calendar_days_ahead = 7
 ignore_calendar = []      # all-day entries with these in the title are reminders, not plans
+keep_days = 30            # archived digests older than this are deleted (git history keeps them); 0 = keep all
 
 [public]
 replies_per_hour = 20     # when people in your server just talk to the bot; spends your subscription

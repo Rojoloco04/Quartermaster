@@ -99,7 +99,7 @@ def _configure_logging(settings) -> None:
     )
     # httpx logs every request URL at INFO, and Ticketmaster and Klipy take
     # their API key as a query parameter - INFO here writes secrets to disk.
-    for noisy in ("httpx", "httpcore"):
+    for noisy in ("httpx", "httpx2", "httpcore"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 

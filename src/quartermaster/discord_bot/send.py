@@ -20,7 +20,9 @@ from .bot import split_message
 
 
 async def _send(settings: Settings, text: str) -> None:
-    client = discord.Client(intents=discord.Intents.none())
+    # REST only, so intents change nothing; without guilds discord.py warns
+    # "Guilds intent seems to be disabled" on every send.
+    client = discord.Client(intents=discord.Intents(guilds=True))
     await client.login(settings.discord_bot_token or "")
     try:
         user = await client.fetch_user(settings.discord_owner_id)

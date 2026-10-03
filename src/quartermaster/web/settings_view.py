@@ -14,7 +14,7 @@ import tomllib
 from pathlib import Path
 
 from ..config import _deep_merge, DEFAULTS, REPO_ROOT, Settings
-from .layout import _e, markdown_to_html, page
+from .layout import _e, clip, markdown_to_html, page
 
 
 log = logging.getLogger(__name__)
@@ -270,11 +270,14 @@ def render_file(rel: str, text: str) -> str:
 
 
 def file_block(vault: Path, rel: str, title: str, note: str = "") -> str:
+    """An editable file. Live-refreshed (``layout.LIVE_JS``) while its editor is
+    closed, so a write by the agent shows up, with the hash a save needs."""
     path = editable_path(vault, rel)
     text = path.read_text("utf-8") if path and path.exists() else ""
     view = render_file(rel, text) if text.strip() else "<p class='muted'>Nothing here yet.</p>"
+    block_id = "file-" + re.sub(r"[^\w-]", "-", rel)
     return (
-        f"<div class='file' data-path='{_e(rel)}' data-hash='{file_hash(path) if path else ''}'>"
+        f"<div class='file' id='{block_id}' data-live data-path='{_e(rel)}' data-hash='{file_hash(path) if path else ''}'>"
         f"<div class='filehead'><strong>{_e(title)}</strong> <span class='muted'>{_e(rel)}</span>"
         f"<button type='button' data-edit>Edit</button><span class='msg'></span></div>"
         + (f"<p class='note'>{note}</p>" if note else "")
@@ -302,9 +305,10 @@ def _fact_title(path: Path) -> str:
 def settings_page(settings: Settings, csrf: str) -> str:
     vault = settings.vault
     prefs = "".join(
-        f"<tr data-key='{_e(key)}'><td><code>{_e(key)}</code></td><td class='v'"
-        + ("" if value.startswith(("[", "{")) or key.count(".") != 1 else " data-pref title='Click to change'")
-        + f">{_e(value)}</td></tr>"
+        f"<tr data-key='{_e(key)}'><td class='nw'><code>{_e(key)}</code></td>"
+        + (f"<td class='v'>{clip(value, 90)}</td>" if value.startswith(("[", "{")) or key.count(".") != 1
+           else f"<td class='v' data-pref title='Click to change'>{_e(value)}</td>")
+        + "</tr>"
         for key, value, _ in effective_prefs(vault)
     )
     config_hash = file_hash(vault / "System" / "config.toml")
@@ -322,7 +326,7 @@ Instructions, facts and lessons apply from the next message. Preferences apply t
 and to the bot after a restart, except <code>chat.*</code>, which applies from the next message. Click a value to change
 it (Enter saves, Esc cancels). A save is refused if the agent changed the file since you opened it. Notion pages
 are edited in Notion: the mirror is overwritten on every sync.</p></section>
-<section><h2>Preferences in force</h2><table id="prefs" data-hash="{config_hash}"><tr><th>Setting</th><th>Value</th></tr>{prefs}</table>
+<section><h2>Preferences in force</h2><table id="prefs" data-live data-hash="{config_hash}"><tr><th>Setting</th><th>Value</th></tr>{prefs}</table>
 {file_block(vault, "System/config.toml", "Edit preferences", "The whole file, for lists like the distance bands. Saved only if it parses.")}</section>
 <section><h2>Conflicts</h2>{file_block(vault, "System/conflicts.md", "Where what it knows disagrees", "Found by the daily reconcile (<code>qm reconcile</code>). Answer in a DM and every file gets updated, or fix it yourself and delete the entry.")}</section>
 <section><h2>What it knows</h2>{fact_blocks}</section>
@@ -330,8 +334,8 @@ are edited in Notion: the mirror is overwritten on every sync.</p></section>
 <section><h2>Instructions</h2>{file_block(vault, "CLAUDE.md", "How the agent works in your vault", "Loaded at the start of every conversation and into every digest.")}</section>
 <div class="grid2">
 <section><h2>Mutes</h2>{file_block(vault, "System/muted.md", "Never raise these again", "One <code>kind:key</code> per line. <code>artist/Tool</code> with no kind mutes every kind.")}</section>
-<section><h2>Dev queue</h2>{file_block(vault, "System/dev-queue.md", "Changes to Quartermaster itself", "Worked in Claude Code. Tick an item with <code>[x]</code> to close it.")}</section>
+<section><h2>Dev queue</h2>{file_block(vault, "System/dev-queue.md", "Changes to Quartermaster itself", "Worked in Claude Code. Delete an item's line to close it.")}</section>
 </div>
 <section><h2>Minecraft links</h2>{file_block(vault, "System/minecraft-links.md", "Discord accounts linked to Minecraft names", "A linked name on the server's op list may start, stop and run commands from a Discord channel. Added when someone proves both accounts in-game; delete a line to unlink.")}</section>
 <section><h2>Secrets</h2><p class="note">In the repo's <code>.env</code>. Shown as set or not, never their values, and not editable from a browser.</p>
-<table>{env}</table></section>""", EDIT_JS + PREF_JS, EDIT_CSS + PREF_CSS, csrf)
+<table id="secrets" data-live>{env}</table></section>""", EDIT_JS + PREF_JS, EDIT_CSS + PREF_CSS, csrf)

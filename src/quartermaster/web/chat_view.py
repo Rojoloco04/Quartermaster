@@ -6,7 +6,7 @@ from __future__ import annotations
 from ..agent import transcript_dir
 from ..config import Settings
 from .dashboard_view import session_entries
-from .layout import _e, markdown_to_html, page
+from .layout import _e, clip, markdown_to_html, page, time_html
 
 
 CHAT_CSS = """
@@ -33,6 +33,7 @@ function add(who, cls, content, isHtml) {
   d.append(w, b); chat.append(d); window.scrollTo(0, document.body.scrollHeight);
 }
 async function send(text) {
+  window.qmBusy = true;  // no live refresh of the history while a reply streams in
   add('You', 'you', text, false);
   let started = false;
   try {
@@ -54,7 +55,7 @@ async function send(text) {
       }
     }
   } catch (e) { add('Quartermaster', 'err', 'Lost the connection: ' + e); }
-  finally { if (started) status.textContent = ''; }
+  finally { if (started) status.textContent = ''; window.qmBusy = false; }
 }
 form.addEventListener('submit', e => { e.preventDefault(); const t = box.value.trim(); if (t) { box.value = ''; send(t); } });
 box.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } });
@@ -62,17 +63,24 @@ window.scrollTo(0, document.body.scrollHeight); box.focus();
 """
 
 
+# A reply is read whole; only something pasted-log long is clipped.
+CHAT_CLIP = 2000
+
+
+def _message(m: dict) -> str:
+    mine = m["role"] == "user"
+    body = f"<div class='body'>{_e(m['text']) if mine else markdown_to_html(m['text'])}</div>"
+    return (f"<div class='msg {'you' if mine else 'qm'}'><span class='who'>{'You' if mine else 'Quartermaster'}</span> "
+            f"<span class='muted'>{time_html(m['at'])} via {m['source']}</span>"
+            f"{clip(m['text'], 300, body) if len(m['text']) > CHAT_CLIP else body}</div>")
+
+
 def chat_page(settings: Settings, csrf: str) -> str:
     _, entries = session_entries(transcript_dir(settings.vault))
-    history = "".join(
-        f"<div class='msg {'you' if m['role'] == 'user' else 'qm'}'><span class='who'>"
-        f"{'You' if m['role'] == 'user' else 'Quartermaster'}</span> <span class='muted'>{_e(m['at'])} via {m['source']}</span>"
-        f"<div class='body'>{_e(m['text']) if m['role'] == 'user' else markdown_to_html(m['text'])}</div></div>"
-        for m in entries
-    )
+    history = "".join(_message(m) for m in entries)
     return page("Chat", f"""
 <section><h2>Chat (the same conversation as your Discord DMs and <code>claude</code> in the vault)</h2>
-<div id="chat">{history or "<p class='muted'>No conversation yet.</p>"}</div>
+<div id="chat" data-live data-live-stick>{history or "<p class='muted'>No conversation yet.</p>"}</div>
 <div id="chatstatus" class="muted"></div>
 <form id="chatform"><textarea placeholder="Message Quartermaster (Enter sends, Shift+Enter for a new line)" rows="2"></textarea>
 <button type="submit">Send</button></form>

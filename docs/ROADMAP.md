@@ -1,76 +1,38 @@
 # Roadmap
 
-Everything planned but not built, with enough design detail to build from. For
-what exists and why it looks the way it does, see `CLAUDE.md`.
+What's planned but not built, with enough design detail to build from, and what
+was considered and rejected. What exists is in `CLAUDE.md`; what changed when
+is in git.
 
-| Phase | What | State |
-| --- | --- | --- |
-| 1 | Vault + Notion mirror | Done — synced daily by Task Scheduler |
-| 2 | Discord assistant + moderation | Done |
-| 3 | Integrations | Done |
-| 4 | Weekly digest | Done — running daily as a proof of concept |
-| 5 | Infra | Done 2026-09-22 — service, vault push, Tailscale; restore verified |
-| 6–10 | Extensions | **Next** |
-| — | Added after the original plan | See the end |
-
-Phases 1–4 are described as built in `CLAUDE.md`, including where the build
-deviated from the plan (the wishlist is a Notion page, not a database).
-
-Still open from Phase 4:
-- **Interest profile** — seeded 2026-09-22 (Claude.ai memories + Spotify). Still
-  open: refining it from reactions to recommendations.
-- **Switch the digest to weekly** (Sunday) once the daily output looks right.
-
----
-
-## Phase 5 — Infra
-
-- ~~**Service registration**~~ — done 2026-09-22: a logon task runs the
-  `qm serve` supervisor windowless, and each of bot/web/serve holds a lock so a
-  second copy can't start. Native, not Docker: a containerised bot would split
-  the shared session and needs its own Linux login (revisit for a sandbox or a
-  move to a server).
-- ~~**Scheduled push**~~ of the vault to its private remote — done 2026-09-22:
-  `qm push`, daily (03:30 since 2026-10-03, was 23:00); commits everything, never forces.
-- ~~**restic** nightly to a second drive~~ — dropped 2026-09-22: the vault's git
-  remote already keeps every version off this machine. What isn't in it is
-  rebuildable (`state.db`) or re-creatable (`.env`, OAuth tokens: `qm auth`).
-- ~~**Tailscale**~~ — done 2026-09-22; no router port forwarding. First used
-  for the Minecraft server (firewall: port 25565 from 100.64.0.0/10 only).
-- ~~**Uptime Kuma**~~ — dropped 2026-09-22. It would run on the same PC it
-  watches, so it misses the main failure (the PC down), the supervisor already
-  restarts the bot, the dashboard shows its heartbeat, and it needed WSL2 +
-  Docker installed just for this. If an out-of-band alert is ever wanted, a
-  hosted dead-man's switch (healthchecks.io, the bot pinging it) covers the PC
-  being off too.
-
-*Done when:* the vault can be destroyed and restored from the remote with nothing
-lost. **Verified 2026-09-22:** a fresh clone of the remote matched the local
-vault (same commit, all 87 files); only `state.db`, `.mcp.json` and the turn
-lock are left out, each rebuildable.
-
----
-
-## Extensions
-
-| Phase | What | Grouped because |
-| --- | --- | --- |
-| 6 | Notion hygiene, decision log, voice capture | All reuse Phase 1–4 machinery; no new dependencies |
-| 7 | HSA and receipt tracking | Real money — its own phase |
-| 8 | Travel deals from home | Extends the 500-mile events radius to flights |
-| 9 | Lecture transcription + semantic search | Both make the local GPU load-bearing |
-| 10 | Jellyfin | Streaming |
-
-### Phase 6
+## Next: Phase 6
 
 - **Notion hygiene** beyond staleness: duplicate pages, orphans, broken links,
   inconsistent tags.
-- **Decision log** — when a decision is made in conversation, record what and why.
+- **Decision log**: when a decision is made in conversation, record what and why.
   Cheap, and genuinely useful later.
-- **Voice capture** — a voice memo sent to Discord is transcribed and filed to
+- **Voice capture**: a voice memo sent to Discord is transcribed and filed to
   `inbox/`. The lowest-friction capture path.
 
-### Phase 7 — HSA and receipts
+## The digest
+
+- **More event sources.** Ticketmaster carries few raves and EDM nights, car
+  meets or cultural festivals; those sell on Dice, Resident Advisor and
+  Eventbrite. The most promising first step is Bandsintown's artist events API:
+  every tour date of each top artist, wherever it's ticketed. Verify its terms
+  and access before building.
+- **Refine the interest profile** from reactions to what the digest shows.
+- **Switch to weekly** (Sunday) once the daily output looks right.
+
+## Later phases
+
+| Phase | What | Grouped because |
+| --- | --- | --- |
+| 7 | HSA and receipt tracking | Real money: its own phase |
+| 8 | Travel deals from home | Extends the events radius to flights |
+| 9 | Lecture transcription + semantic search | Both make the local GPU load-bearing |
+| 10 | Jellyfin | Streaming |
+
+### Phase 7: HSA and receipts
 
 An HSA can reimburse qualified medical expenses **years after the fact**, provided
 the documentation was kept. That makes this a ledger with money attached rather
@@ -86,12 +48,12 @@ than a filing convenience.
   treatment**. What qualifies is IRS Publication 502 territory; it says so rather
   than guessing. `CLAUDE.md` in the vault already states this rule.
 
-### Phase 8 — Travel deals
+### Phase 8: Travel deals
 
-Flight deals from the home airport. Amadeus Self-Service has a free tier —
+Flight deals from the home airport. Amadeus Self-Service has a free tier:
 **verify it is still available before building**; flight APIs churn.
 
-### Phase 9 — Local GPU work
+### Phase 9: Local GPU work
 
 - **Lecture transcription** via whisper.cpp, output into Notion. The one local-GPU
   use that clearly earns its place.
@@ -101,82 +63,51 @@ Flight deals from the home airport. Amadeus Self-Service has a free tier —
 
 **Local generation was evaluated and rejected.** The Agent SDK bills against the
 Claude subscription, which removes the cost argument, and an 8GB card caps local
-models at 7–9B — a noticeable step down for writing the digest. GPU wear at this
-duty cycle is not a real concern. Worth revisiting only if subscription rate limits
-start to bite.
+models at 7–9B, a noticeable step down. GPU wear at this duty cycle is not a real
+concern. Worth revisiting only if subscription rate limits start to bite.
 
-### Phase 10 — Jellyfin
+### Phase 10: Jellyfin
 
 Streaming with NVENC hardware transcoding.
 
----
+## Smaller items
 
-## Added after the original plan
-
-### Done
-
-- **Discord moderation and expression** — delete, pin, kick, ban, timeout, voice
-  mute/deafen/disconnect, react, say, gif. The model parses; code executes. Gated by
-  the invoker's own Discord permissions and role hierarchy. See `CLAUDE.md`.
-
-### Done since
-
-- **`qm web`** dashboard, **streaming Discord replies**, plain-word session
-  control, the **dev queue**, **Last.fm** taste signal, **approved Notion
-  writes** anywhere plus the weekly **Claude page tidy**, the **brain** graph
-  of the vault, **weather** in the digest, **lessons** from corrections, an
-  editable **settings** page and an **architecture** page in `qm web`, the daily
-  **reconcile** of facts with conflicts put to the owner, and `qm quit`.
-- 2026-09-22: calendar edit/delete, reconcile on request from a DM, the
-  **Minecraft** server (DMs, op-gated guild control with in-game-proven links,
-  the **Servers** tab), and **chat** for friends who mention the bot.
-- 2026-10-03: the **digest rebuilt** as JSON that code renders (fixed layout,
-  bold acts, one line per show however many listings it's sold as); the model
-  only picks new events and says why. Built at 03:15, sent at 08:00, a 30-day window that
-  actually reaches 30 days, **on-sales folded in** and shown once (the old
-  presale ping's filter was ignored by Ticketmaster, so it repeated), `state.db`
-  pruned. **Weather dropped**: the owner checks an app, and a text forecast
-  wasn't worth the tokens. Nightly **game server backups** to F:.
-
-### Planned
-
-- **Jellyfin notifications** — build as a plain webhook that posts to a channel.
-  **No agent, no vault, no model cost.** Nothing about it needs Claude, and routing
-  it through the agent would only add a path to the vault that has no reason to
-  exist.
-- **Letting friends talk to the bot.** Chat is on (2026-09-22): a guild mention
-  the parser calls `chat` gets a reply from the public profile, which still has
-  `tools=[]`, no vault and no session, capped per person per hour. Anything
-  more means *adding* capabilities to that empty list, never removing access
-  from a privileged agent. Next, if wanted: memory of the channel's recent
-  messages, so a reply can follow the conversation.
-- **Voice playback** — needs `PyNaCl` and ffmpeg. The bot currently logs a warning
-  that voice is unsupported. Voice *moderation* already works; it is a different API.
+- **Jellyfin notifications**: a plain webhook that posts to a channel. **No
+  agent, no vault, no model cost.** Routing it through the agent would only add
+  a path to the vault that has no reason to exist.
+- **More for friends who talk to the bot.** Anything more means *adding*
+  capabilities to the public profile's empty tool list, never removing access
+  from a privileged agent.
+- **Satisfactory from guild channels.** It has no in-game whisper to prove a
+  link with, so control would be owner-only or by a Discord role.
+- **Game servers on a separate box** instead of this PC.
+- **Voice playback**: needs `PyNaCl` and ffmpeg. Voice *moderation* already
+  works; it is a different API.
+- **Persistent voice-mute timers.** "Mute for 30s" is scheduled in memory, so a
+  restart leaves the person muted. Move pending undos into `state.db`.
 - **Restock tracker** for food and snacks: what's running low, with links only.
 - **A `/budget` command** in Discord. Links and summaries only: no bank logins,
   nothing that moves money.
-- **Game servers for friends**, reachable over Tailscale. No port forwarding.
-  Piloting with Minecraft (Paper) since 2026-09-22: `qm minecraft`, and the bot
-  starts/stops it and runs allow-listed commands over RCON. Satisfactory
-  added 2026-09-22 (`qm satisfactory`, DM tools, a /servers tab; on this PC for
-  now, a separate server box later). Nightly zips of both to the F: HDD added
-  2026-10-03 (`qm backup`, 03:35, skip if unchanged, keep 14): the vault push
-  never covered them. Next, if wanted: Satisfactory from guild
-  channels. It has no in-game whisper to prove a link with, so control would
-  be owner-only or by a Discord role.
-- **Persistent voice-mute timers.** "Mute for 30s" is scheduled in memory today, so a
-  restart leaves the person muted. Move pending undos into `state.db`.
+- **The bot in Docker**, if it moves to a server. Not on this PC: a Linux
+  container would split the shared session and need its own Claude login.
 
-### Considered and rejected
+## Considered and rejected
 
-- **An unattended dev runner** working the `!queue` overnight (worktree, shell,
+- **An unattended dev runner** working the queue overnight (worktree, shell,
   push, PR). Built, then removed: an agent with a shell and a repo-wide GitHub
   token running unsupervised. The queue is worked in Claude Code with the owner
   present instead. Revisit only with a sandbox and a single-repo token.
-
-- **n8n.** It was the centre of the original homelab plan. The Agent SDK now owns tool
-  use and a scheduler owns timing; keeping n8n would mean two things that both "run
-  jobs on a timer", with workflows locked in a database instead of versioned.
+- **restic** to a second drive. The vault's git remote already keeps every
+  version off this machine; what isn't in it is rebuildable (`state.db`) or
+  re-creatable (`.env`, OAuth tokens via `qm auth`).
+- **Uptime Kuma.** It would run on the PC it watches, so it misses the main
+  failure (the PC down); the supervisor already restarts the bot and the
+  dashboard shows its heartbeat. If an out-of-band alert is ever wanted, a
+  hosted dead-man's switch (healthchecks.io, the bot pinging it) covers the PC
+  being off too.
+- **n8n.** The Agent SDK owns tool use and a scheduler owns timing; keeping n8n
+  would mean two things that both "run jobs on a timer", with workflows locked
+  in a database instead of versioned.
 - **Two-way Notion sync.** Notion is authored by a human; the vault mirrors it one
   way. The only writes back are proposals the owner confirms in Discord, plus the one
   page the agent owns. No merge logic, so no conflict bugs.
@@ -188,3 +119,5 @@ Streaming with NVENC hardware transcoding.
 - **Real-time sync between Discord and the terminal.** Turn-level sync via the
   shared session covers it; live mirroring needs a relay process that can silently
   die.
+- **Weather in the digest.** The owner checks an app; a text forecast wasn't
+  worth the tokens.

@@ -91,6 +91,35 @@ def test_v2_history_carries_over_so_nothing_is_sent_twice(tmp_path: Path):
         assert not conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'events_seen'").fetchone()
 
 
+def test_a_v3_database_gains_the_v4_columns(tmp_path: Path):
+    import sqlite3
+
+    path = tmp_path / "state.db"
+    db.connect(path).close()
+    old = sqlite3.connect(path)
+    old.executescript("""
+        ALTER TABLE listings DROP COLUMN segment; ALTER TABLE listings DROP COLUMN genres;
+        ALTER TABLE listings DROP COLUMN considered_taste; PRAGMA user_version = 3;""")
+    old.close()
+    with db.session(path) as conn:
+        db.upsert_listing(conn, listing("e1", genres=["Hip-Hop/Rap"], segment="Music"))
+        db.mark_listings(conn, ["e1"], "considered", taste="abc")
+        row = db.listings_by_id(conn, ["e1"])["e1"]
+        assert (row["genres"], row["segment"], row["considered_taste"]) == ('["Hip-Hop/Rap"]', "Music", "abc")
+
+
+def test_an_up_to_date_database_opens_while_another_connection_is_writing(tmp_path: Path):
+    path = tmp_path / "state.db"
+    writer = db.connect(path)
+    db.upsert_listing(writer, listing("e1"))  # an open write transaction, as during a digest
+    try:
+        reader = db.connect(path)  # used to write user_version here and wait out the lock
+        assert db.listings_by_id(reader, ["e1"]) == {}
+        reader.close()
+    finally:
+        writer.close()
+
+
 def test_prune_drops_what_has_outlived_its_use(tmp_path: Path):
     from datetime import datetime, timezone
 

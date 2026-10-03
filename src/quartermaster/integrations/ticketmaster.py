@@ -59,6 +59,23 @@ def _haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> floa
     return 2 * EARTH_RADIUS_MILES * math.asin(math.sqrt(min(1.0, a)))
 
 
+def _classification(raw: dict) -> tuple[str, list[str]]:
+    """(segment, [genre, subgenre]) from the primary classification, without
+    Ticketmaster's "Undefined" placeholders: ("Music", ["Hip-Hop/Rap", "Trap"])."""
+    found = raw.get("classifications") or []
+    primary = next((c for c in found if c.get("primary")), found[0] if found else {})
+
+    def name(key: str) -> str:
+        value = ((primary.get(key) or {}).get("name") or "").strip()
+        return "" if value.lower() == "undefined" else value
+
+    genres: list[str] = []
+    for g in (name("genre"), name("subGenre")):
+        if g and g not in genres:
+            genres.append(g)
+    return name("segment"), genres
+
+
 def _normalize(raw: dict) -> dict:
     """A listing, in the fields ``db.listings`` stores and the digest's JSON
     uses, plus ``starts_at`` (UTC, for sorting) and ``lat``/``lon``."""
@@ -70,6 +87,7 @@ def _normalize(raw: dict) -> dict:
     start = ((raw.get("dates") or {}).get("start") or {})
     sales = raw.get("sales") or {}
 
+    segment, genres = _classification(raw)
     lat = location.get("latitude")
     lon = location.get("longitude")
     return {
@@ -83,6 +101,8 @@ def _normalize(raw: dict) -> dict:
         "starts_at": start.get("dateTime") or start.get("localDate", ""),
         "venue": venue.get("name"),
         "city": (venue.get("city") or {}).get("name"),
+        "segment": segment,
+        "genres": genres,
         "url": raw.get("url"),
         "onsale_at": (sales.get("public") or {}).get("startDateTime", ""),
         "presales": [{"name": p.get("name") or "Presale", "starts_at": p.get("startDateTime", "")}
@@ -179,8 +199,8 @@ def events_for_bands(settings: Settings, window_days: int) -> dict[str, list[dic
     are also returned by a farther band's query - that's expected, not a bug)
     and then kept only if the computed distance actually falls in
     ``[min_miles, max_miles)``. An event id is only ever placed in one band's
-    list. A band's optional ``classification`` narrows its query (the weekend
-    band asks for music only). Not capped: the digest caps what it offers the
+    list. A band's optional ``classification`` narrows its query. Not capped:
+    the digest filters (a ``taste_only`` band) and caps what it offers the
     model, after dropping what it offered before.
     """
     bands = sorted(settings.prefs["events"]["bands"], key=lambda b: b["max_miles"])

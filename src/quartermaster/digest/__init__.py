@@ -11,9 +11,14 @@ it picks the ones worth a line and says why in a few words (``output_schema``,
 answering by id). It never sees on-sales, prices or the calendar, and never
 restates a fact.
 
+Events come in distance bands (config ``events.bands``): near ones all go to
+the model with a low bar; a ``taste_only`` band (travel) offers only what
+matches a top artist, interests.md, or a genre named there, with a high bar.
+
 How often things come back, with a daily digest and a month's window:
 - an event: when first found (if picked), then once more in the week it
-  happens; an event the model passed over isn't offered again.
+  happens; an event the model passed over is offered again only once
+  interests.md changes (``taste.taste_key``).
 - an on-sale: once.
 - a stale Notion page: at most weekly; unreadable wishlist prices: weekly, on
   ``digest.weekday``.
@@ -32,6 +37,7 @@ import logging
 import re
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
 
 from .. import agent, db
 from ..config import Settings
@@ -40,15 +46,16 @@ from ..knowledge import mutes, stale
 from . import taste
 from .listings import group, item
 from .render import render
-from .taste import matches as matches_taste, positive_interests
+from .taste import matches as matches_taste, matches_genre, positive_interests
 
 
 log = logging.getLogger(__name__)
 
 __all__ = ["run_digest", "build", "render", "matches_taste", "positive_interests"]
 
-MAX_EVENT_PICKS = 12
-# New shows offered to the model per distance band per day; the rest wait.
+MAX_EVENT_PICKS = 20
+# New shows offered to the model per distance band per day, unless the band
+# sets ``max_offered``; the rest wait.
 MAX_OFFERED_PER_BAND = 60
 MAX_ONSALE_ITEMS = 10
 REMINDER_DAYS = 7
@@ -76,10 +83,15 @@ Pick the events worth telling the owner about in this morning's digest. Each \
 candidate below is one show near them (one may be sold as several listings; \
 it is still one show). None has been offered before.
 
-- Each has a distance band with a bar: low = a casual local mention is fine; \
-medium = should genuinely match their interests; high = must clearly be worth \
-the trip.
-- Judge by their interests and top artists below. Don't pick filler.
+- Each has a distance band with a bar. low = near home: be generous, \
+anything plausibly up their street is worth a line (a genre they like, a \
+festival, a cultural event, anime, gaming or esports, a team they follow), \
+even by an act they don't know. medium = should genuinely match their \
+interests. high = must clearly be worth the trip: an artist they listen to, \
+or something rare squarely in their interests.
+- Judge by their interests and top artists below; `genres` is \
+Ticketmaster's, for acts you don't know. Don't pick filler: no tribute \
+bands, open mics or kids' shows unless their interests say so.
 - At most {MAX_EVENT_PICKS}. Picking none is fine.
 - For each pick, `why`: at most 10 words on why this one for them (e.g. \
 "your #2 artist this year", "you said you want to see more jazz"). No emoji. \
@@ -144,17 +156,18 @@ def _member_ids(members: list[dict]) -> list[str]:
     return [m["id"] for m in members]
 
 
-def classify_events(groups: list[list[dict]], rows: dict, today: date) -> tuple[list, list]:
-    """(new, reminders). New: no listing in it was ever offered to the model.
-    Reminder: shown before, happens within ``REMINDER_DAYS``, and last shown
-    before that week began. Pure given ``rows`` (listing id -> db row)."""
+def classify_events(groups: list[list[dict]], rows: dict, today: date, taste: str = "") -> tuple[list, list]:
+    """(new, reminders). New: never shown, and not offered to the model since
+    interests.md last changed (``taste`` is its key). Reminder: shown before,
+    happens within ``REMINDER_DAYS``, and last shown before that week began.
+    Pure given ``rows`` (listing id -> db row)."""
     new, reminders = [], []
     for members in groups:
         seen = [rows[i] for i in _member_ids(members) if i in rows]
-        if not any(r["considered_at"] for r in seen):
+        shown = max((r["event_shown_at"] or "" for r in seen), default="")
+        if not shown and not any(r["considered_at"] and r["considered_taste"] == taste for r in seen):
             new.append(members)
             continue
-        shown = max((r["event_shown_at"] or "" for r in seen), default="")
         first = _iso_date(members[0].get("local_date") or "")
         if shown and first and 0 <= (first - today).days <= REMINDER_DAYS:
             if shown[:10] < (first - timedelta(days=REMINDER_DAYS)).isoformat():
@@ -162,9 +175,9 @@ def classify_events(groups: list[list[dict]], rows: dict, today: date) -> tuple[
     return new, reminders
 
 
-def offer(new: list[list[dict]], likes) -> list[list[dict]]:
-    """Which new groups the model sees today: per band, at most
-    ``MAX_OFFERED_PER_BAND``, the ones ``likes`` first, then spread across the
+def offer(new: list[list[dict]], likes, caps: dict[str, int] | None = None) -> list[list[dict]]:
+    """Which new groups the model sees today: per band, at most its cap
+    (``caps``, else ``MAX_OFFERED_PER_BAND``), the ones ``likes`` first, then spread across the
     month (the first show of each date, then the second of each...). The rest
     stay unconsidered and come up on a later morning. Soonest-first filled a
     500-mile band with tonight's shows every day and never reached next month."""
@@ -172,14 +185,15 @@ def offer(new: list[list[dict]], likes) -> list[list[dict]]:
     for members in new:
         by_band.setdefault(members[0].get("band") or "", []).append(members)
     offered = []
-    for groups in by_band.values():
+    for band, groups in by_band.items():
         nth_of_day: dict[str, int] = {}
         keyed = []
         for g in sorted(groups, key=lambda g: g[0].get("local_date") or ""):
             day = g[0].get("local_date") or ""
             nth_of_day[day] = nth_of_day.get(day, -1) + 1
             keyed.append(((not any(likes(m) for m in g), nth_of_day[day], day), g))
-        offered += [g for _, g in sorted(keyed, key=lambda pair: pair[0])[:MAX_OFFERED_PER_BAND]]
+        cap = (caps or {}).get(band, MAX_OFFERED_PER_BAND)
+        offered += [g for _, g in sorted(keyed, key=lambda pair: pair[0])[:cap]]
     return offered
 
 
@@ -191,10 +205,18 @@ def _collect_events(settings, conn, today, mute_list, artists, interests_text):
     found = [e for events in banded.values() for e in events]
     for listing in found:
         db.upsert_listing(conn, listing)
-    kept = [e for e in found if not mutes.is_muted(ticketmaster.item_id(e), mute_list)]
-    new, reminders = classify_events(group(kept), db.listings_by_id(conn, [e["id"] for e in kept]), today)
-    offered = offer(new, lambda e: taste.matches(e, artists, interests_text))
-    log.info("events: %d listings, %d new shows, %d offered, %d reminders", len(found), len(new), len(offered), len(reminders))
+    conn.commit()  # observations saved; don't hold the write lock through the model call
+    bands = settings.prefs["events"]["bands"]
+    taste_only = {b["name"] for b in bands if b.get("taste_only")}
+    kept = [e for e in found if not mutes.is_muted(ticketmaster.item_id(e), mute_list)
+            and (e.get("band") not in taste_only
+                 or taste.matches(e, artists, interests_text) or matches_genre(e, interests_text))]
+    rows = db.listings_by_id(conn, [e["id"] for e in kept])
+    new, reminders = classify_events(group(kept), rows, today, taste.taste_key(interests_text))
+    caps = {b["name"]: int(b["max_offered"]) for b in bands if b.get("max_offered")}
+    offered = offer(new, lambda e: taste.matches(e, artists, interests_text), caps)
+    log.info("events: %d listings, %d kept, %d new shows, %d offered, %d reminders",
+             len(found), len(kept), len(new), len(offered), len(reminders))
     return None, offered, reminders
 
 
@@ -205,7 +227,12 @@ def _collect_onsales(settings, conn, today, mute_list, artists, interests_text):
         return _unavailable("on-sales", exc), []
     for listing in found:
         db.upsert_listing(conn, listing)
-    wanted = [e for e in found if taste.matches(e, artists, interests_text)
+    conn.commit()
+    # Near home a genre named in interests.md is enough; farther, only an act.
+    near = min((b["max_miles"] for b in settings.prefs["events"]["bands"]), default=0)
+    wanted = [e for e in found
+              if (taste.matches(e, artists, interests_text)
+                  or ((e.get("distance_miles") or near) < near and matches_genre(e, interests_text)))
               and not mutes.is_muted(ticketmaster.item_id(e, "presale"), mute_list)]
     rows = db.listings_by_id(conn, [e["id"] for e in wanted])
     fresh = [g for g in group(wanted) if not any(rows.get(i) and rows[i]["onsale_shown_at"] for i in _member_ids(g))]
@@ -218,7 +245,8 @@ async def pick_events(settings: Settings, candidates: list[dict]) -> dict[str, s
     payload = [
         {"id": c["id"], "acts": c["acts"], "title": c["title"], "dates": c["first_date"] +
          (f" to {c['last_date']}" if c["last_date"] != c["first_date"] else ""), "venue": c["venue"],
-         "city": c["city"], "distance_miles": c["distance_miles"], "band": c["band"], "bar": c["bar"],
+         "city": c["city"], "segment": c["segment"], "genres": c["genres"],
+         "distance_miles": c["distance_miles"], "band": c["band"], "bar": c["bar"],
          "listings": len(c["listings"])}
         for c in candidates
     ]
@@ -289,7 +317,8 @@ def build(settings: Settings, conn: sqlite3.Connection, today: date | None = Non
     mute_list = mutes.load(settings.muted_file)
     artists = taste.artist_names(settings)
     interests_text = positive_interests(taste.interests(settings)).lower()
-    marks: dict[str, list[str]] = {"considered": [], "event": [], "onsale": [], "surfaced": []}
+    marks: dict = {"considered": [], "event": [], "onsale": [], "surfaced": [],
+                   "taste": taste.taste_key(interests_text)}
 
     digest: dict = {"date": today.isoformat(), "calendar": _collect_calendar(settings, today)}
 
@@ -336,7 +365,7 @@ def build(settings: Settings, conn: sqlite3.Connection, today: date | None = Non
 
 def record(conn: sqlite3.Connection, marks: dict) -> None:
     for what in ("considered", "event", "onsale"):
-        db.mark_listings(conn, marks[what], what)
+        db.mark_listings(conn, marks[what], what, marks.get("taste", ""))
     for kind, iid, summary in marks["surfaced"]:
         db.record_surfaced(conn, iid, kind, summary)
     removed = db.prune(conn)
@@ -368,4 +397,25 @@ def run_digest(settings: Settings, *, dry_run: bool = False, test: bool = False)
         stem.with_suffix(".json").write_text(json.dumps(digest, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
         send_or_hold(settings, text, "digest")
         record(conn, marks)
+        removed = prune_archive(settings.digests_dir, int(settings.prefs["digest"].get("keep_days", 30)))
+        if removed:
+            log.info("pruned %d archived digest file(s)", len(removed))
     return text
+
+
+def prune_archive(folder: Path, keep_days: int, today: date | None = None) -> list[Path]:
+    """Delete archived digests dated more than ``keep_days`` ago. Only files
+    named by a date are touched; 0 keeps everything."""
+    if keep_days <= 0 or not folder.exists():
+        return []
+    cutoff = (today or date.today()) - timedelta(days=keep_days)
+    removed = []
+    for path in folder.iterdir():
+        try:
+            day = date.fromisoformat(path.stem)
+        except ValueError:
+            continue
+        if path.suffix in (".md", ".json") and day < cutoff:
+            path.unlink()
+            removed.append(path)
+    return removed

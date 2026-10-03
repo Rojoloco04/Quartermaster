@@ -151,8 +151,15 @@ class TestOnsales:
                "sales": {"public": {"startDateTime": "2026-07-25T17:00:00Z"},
                          "presales": [{"name": "Mastercard Presale", "startDateTime": "2026-07-24T17:00:00Z"}]},
                "_embedded": {"venues": [{"name": "Gas South Arena", "city": {"name": "Duluth"}}],
-                             "attractions": [{"name": "League of Legends"}]}}
+                             "attractions": [{"name": "League of Legends"}]},
+               "classifications": [{"primary": True, "segment": {"name": "Miscellaneous"},
+                                    "genre": {"name": "Undefined"}, "subGenre": {"name": "Undefined"}},
+                                   ]}
         e = ticketmaster._normalize(raw)
+        assert (e["segment"], e["genres"]) == ("Miscellaneous", [])
+        raw["classifications"] = [{"primary": True, "segment": {"name": "Music"},
+                                   "genre": {"name": "Hip-Hop/Rap"}, "subGenre": {"name": "Trap"}}]
+        assert ticketmaster._normalize(raw)["genres"] == ["Hip-Hop/Rap", "Trap"]
         assert (e["local_date"], e["local_time"], e["acts"]) == ("2026-10-03", "16:00", ["League of Legends"])
         assert e["presales"] == [{"name": "Mastercard Presale", "starts_at": "2026-07-24T17:00:00Z"}]
         assert e["onsale_at"] == "2026-07-25T17:00:00Z" and e["venue"] == "Gas South Arena"

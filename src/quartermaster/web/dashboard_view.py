@@ -8,14 +8,14 @@ from __future__ import annotations
 import json
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from ..agent import transcript_dir
 from ..config import Settings
 from ..knowledge import mutes
 from ..ops import schedule
-from .layout import _e, LOG_JS, page
+from .layout import _e, clip, LOG_JS, page, time_html
 
 
 HEARTBEAT_STALE = 90  # seconds; the bot writes one every 30
@@ -84,8 +84,38 @@ def session_entries(folder: Path, limit: int = 40) -> tuple[str, list[dict]]:
         # Both the bot and the web chat run turns through the SDK.
         source = "discord/web" if str(entry.get("entrypoint", "")).startswith("sdk") else "terminal"
         out.append({"role": entry["type"], "text": str(content).strip(),
-                    "at": str(entry.get("timestamp", ""))[:19].replace("T", " "), "source": source})
+                    "at": _local(str(entry.get("timestamp", ""))), "source": source})
     return files[-1].stem, out[-limit:]
+
+
+def _local(stamp: str) -> str:
+    """A transcript's UTC timestamp ("2026-10-03T17:37:52.123Z") in local time,
+    like the log's; "" if there is none."""
+    try:
+        when = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return stamp[:19].replace("T", " ")
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def model_name(model_id: str) -> str:
+    """"claude-sonnet-5-5" -> "sonnet 5.5"."""
+    family, *version = model_id.removeprefix("claude-").split("-")
+    return f"{family} {'.'.join(version)}".strip()
+
+
+# schtasks.exe is ~0.2s per task; a page refreshing itself every 15s shouldn't
+# spawn seven of them each time.
+TASKS_MAX_AGE = 60
+_tasks_cache: dict = {"at": 0.0, "rows": []}
+
+
+def task_rows() -> list[dict]:
+    if time.monotonic() - _tasks_cache["at"] > TASKS_MAX_AGE:
+        _tasks_cache.update(at=time.monotonic(), rows=schedule.task_info())
+    return _tasks_cache["rows"]
 
 
 def read_log_from(path: Path, pos: int, whole_lines: bool = False) -> tuple[int, str]:
@@ -112,8 +142,23 @@ def service_line(service: dict | None) -> str:
     if service is None or service["last_run"] == "not scheduled":
         return "Not started at logon: <code>qm schedule install</code> sets that up."
     if service["last_result"] == "running":
-        return f"Starts at logon and restarts if it crashes (supervisor up since {_e(service['last_run'])})."
+        return f"Starts at logon and restarts if it crashes (supervisor up since {time_html(service['last_run'])})."
     return "Starts at logon, but the supervisor isn't running now: <code>qm restart</code> starts it."
+
+
+def message_html(m: dict) -> str:
+    """One message of the shared conversation; a long one clipped."""
+    who = "You" if m["role"] == "user" else "Quartermaster"
+    return (f"<div class='msg'><span class='who'>{who}</span> "
+            f"<span class='muted'>{time_html(m['at'])} via {m['source']}</span>"
+            f"{clip(m['text'], 300, f'<pre>{_e(m["text"])}</pre>')}</div>")
+
+
+def job_result(code: str) -> str:
+    """Task Scheduler's last result: 0 is "ok", anything else is a failure code."""
+    if code in ("0", ""):
+        return "ok" if code else ""
+    return "running" if code == "running" else f"failed ({_e(code)})"
 
 
 def dashboard(settings: Settings) -> str:
@@ -121,44 +166,41 @@ def dashboard(settings: Settings) -> str:
     _, log_text = read_log_from(settings.log_path, -TAIL_BYTES)
     session_id, entries = session_entries(transcript_dir(settings.vault))
 
-    info = schedule.task_info()
+    info = task_rows()
     # The service keeps the bot running; it isn't a timed job, so it's reported with the bot.
     service = next((t for t in info if t["name"] == schedule.SERVICE_TASK), None)
     tasks = "".join(
-        f"<tr><td>{_e(t['name'])}</td><td>{_e(t['last_run'])}</td>"
-        f"<td class='{'ok' if t['last_result'] in ('0', '') else 'bad'}'>{_e(t['last_result'])}</td>"
-        f"<td>{_e(t['next_run'])}</td></tr>"
+        f"<tr><td class='nw'>{_e(t['name'].removeprefix('Quartermaster '))}</td><td class='nw'>{time_html(t['last_run'])}</td>"
+        f"<td class='nw {'ok' if t['last_result'] in ('0', '') else 'bad'}'>{job_result(t['last_result'])}</td>"
+        f"<td class='nw'>{time_html(t['next_run'])}</td></tr>"
         for t in info if t is not service
     )
     turns = "".join(
-        f"<tr><td>{_e(t['at'])}</td><td>{_e(t['profile'])}</td><td>{_e(t['model'].replace('claude-', ''))}</td>"
-        f"<td>{_e(t['prompt'][:140])}</td><td>{t['tools']}</td><td>{_e(t['cost'] and '$' + t['cost'])}</td>"
-        f"<td class='{'ok' if t['ok'] else 'bad' if t['ok'] is False else 'muted'}'>"
+        f"<tr><td class='nw'>{time_html(t['at'])}</td><td class='nw'>{_e(t['profile'])}</td>"
+        f"<td class='nw'>{_e(model_name(t['model']))}</td><td class='grow'>{clip(t['prompt'], 110)}</td>"
+        f"<td class='nw'>{t['tools']}</td><td class='nw'>{_e(t['cost'] and '$' + t['cost'])}</td>"
+        f"<td class='nw {'ok' if t['ok'] else 'bad' if t['ok'] is False else 'muted'}'>"
         f"{'ok' if t['ok'] else 'failed' if t['ok'] is False else 'running'}</td></tr>"
         for t in recent_turns(log_text)
     )
-    convo = "".join(
-        f"<div class='msg'><span class='who'>{'You' if m['role'] == 'user' else 'Quartermaster'}</span> "
-        f"<span class='muted'>{_e(m['at'])} via {m['source']}</span><pre>{_e(m['text'][:3000])}</pre></div>"
-        for m in entries
-    ) or "<p class='muted'>No shared session yet.</p>"
+    convo = "".join(message_html(m) for m in entries) or "<p class='muted'>No shared session yet.</p>"
     digests = sorted(settings.digests_dir.glob("*.md"), reverse=True)[:10] if settings.digests_dir.exists() else []
     muted = mutes.load(settings.muted_file)
 
     return page("Quartermaster", f"""
 <div class="grid2">
-<section><h2>Bot</h2><p class="{'ok' if running else 'bad'}"><strong>{'Running' if running else 'Not running'}</strong>
+<section id="bot" data-live><h2>Bot</h2><p class="{'ok' if running else 'bad'}"><strong>{'Running' if running else 'Not running'}</strong>
 <span class="muted"> {_e(detail)}</span></p>
 <p class="muted">{service_line(service)}</p>
 <p class="muted">Log: {_e(settings.log_path)}<br>Session: {_e(session_id or '-')}
 (<code>claude --continue</code> in the vault resumes it)</p></section>
-<section><h2>Scheduled jobs</h2><table><tr><th>Task</th><th>Last run</th><th>Result</th><th>Next</th></tr>{tasks}</table></section>
+<section id="jobs" data-live><h2>Scheduled jobs</h2><table><tr><th>Task</th><th>Last run</th><th>Result</th><th>Next</th></tr>{tasks}</table></section>
 </div>
-<section><h2>Recent turns</h2><table><tr><th>When</th><th>Profile</th><th>Model</th><th>Prompt</th>
+<section id="turns" data-live><h2>Recent turns</h2><table><tr><th>When</th><th>Profile</th><th>Model</th><th>Prompt</th>
 <th>Tools</th><th>Cost</th><th></th></tr>{turns}</table></section>
 <section><h2>Live log</h2><pre id="log"></pre></section>
-<section><h2>Conversation (shared by Discord and the terminal)</h2>{convo}</section>
+<section id="convo" data-live><h2>Conversation (shared by Discord and the terminal)</h2>{convo}</section>
 <div class="grid2">
-<section><h2>Digests</h2><ul>{''.join(f'<li><a href="/digest/{_e(d.stem)}">{_e(d.stem)}</a></li>' for d in digests) or '<li class="muted">none yet</li>'}</ul></section>
-<section><h2>Muted ({len(muted)})</h2><ul>{''.join(f'<li><code>{_e(m.item_id)}</code> <span class="muted">{_e(m.note)}</span></li>' for m in muted) or '<li class="muted">nothing muted</li>'}</ul></section>
+<section id="digests" data-live><h2>Digests</h2><ul>{''.join(f'<li><a href="/digest/{_e(d.stem)}">{_e(d.stem)}</a></li>' for d in digests) or '<li class="muted">none yet</li>'}</ul></section>
+<section id="muted" data-live><h2>Muted ({len(muted)})</h2><ul>{''.join(f'<li><code>{_e(m.item_id)}</code> <span class="muted">{clip(m.note, 80)}</span></li>' for m in muted) or '<li class="muted">nothing muted</li>'}</ul></section>
 </div>""", LOG_JS)
