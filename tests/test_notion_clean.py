@@ -24,7 +24,7 @@ SIGNED = (
 
 PDF_BLOB = (
     "file://%7B%22source%22%3A%22attachment%3A502bd2fd-798e-49d5-8e0d-d214a3fdabe9"
-    "%3AJacksonParrack_Transcript.pdf%22%2C%22permissionRecord%22%3A%7B%22table%22"
+    "%3AAlexSample_Transcript.pdf%22%2C%22permissionRecord%22%3A%7B%22table%22"
     "%3A%22block%22%7D%7D"
 )
 
@@ -50,13 +50,13 @@ class TestExpiringMedia:
 class TestAttachments:
     def test_pdf_blob_becomes_a_readable_name(self):
         out = clean(f'<pdf src="{PDF_BLOB}"></pdf>')
-        assert "JacksonParrack_Transcript.pdf" in out
+        assert "AlexSample_Transcript.pdf" in out
         assert "file://" not in out
         assert "%7B" not in out
 
     def test_file_blob_is_handled_the_same(self):
         out = clean(f'<file src="{PDF_BLOB}"/>')
-        assert "JacksonParrack_Transcript.pdf" in out
+        assert "AlexSample_Transcript.pdf" in out
 
     def test_real_media_url_is_kept_as_a_link(self):
         out = clean('<video src="https://youtu.be/SacLF5yliRw"/>')

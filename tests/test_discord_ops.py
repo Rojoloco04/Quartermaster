@@ -417,7 +417,7 @@ class TestSelfExclusion:
         bot_self = member(BOT_ID, "Quartermaster", bot=True)
         command = Msg(
             "@Quartermaster delete the overwatch messages",
-            member(1, "rojoloco"),
+            member(1, "sam"),
             NOW,
             mentions=[bot_self],
         )

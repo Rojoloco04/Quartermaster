@@ -44,11 +44,10 @@ SECRET_PATTERNS: list[tuple[str, re.Pattern]] = [
 ]
 
 # Personal identifiers. Everything here is fine in the private vault repo and
-# wrong in a public one.
+# wrong in a public one. Generic shapes only: the owner's own names, handle and
+# email live in PRIVATE_PATTERNS_FILE, so the list that keeps them out of the
+# repo isn't itself in the repo.
 PII_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("Real name", re.compile(r"\bJack(?:'s)?\b|\bParrack\b", re.I)),
-    ("GitHub handle", re.compile(r"\bRojoloco04\b", re.I)),
-    ("Personal email", re.compile(r"\bparrackjack@\S+", re.I)),
     ("Windows user path", re.compile(r"[Cc]:\\+Users\\+(?!you\b|USERNAME\b)[A-Za-z0-9._-]+")),
     ("Home directory path", re.compile(r"/(?:home|Users)/(?!you\b|USERNAME\b)[a-z0-9._-]+/", re.I)),
 ]
@@ -60,6 +59,29 @@ BINARY_SUFFIXES = (
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".zip", ".gz",
     ".db", ".sqlite", ".sqlite3", ".ico", ".woff", ".woff2", ".ttf",
 )
+
+
+def private_patterns() -> list[tuple[str, re.Pattern]]:
+    """``.git/info/pii-patterns``: one case-insensitive regex per line (``#``
+    comments), per clone and never committed, e.g. a real name or an email.
+    Missing is fine: the generic patterns still run."""
+    path = subprocess.run(
+        ["git", "rev-parse", "--git-path", "info/pii-patterns"],
+        capture_output=True, text=True, check=False,
+    ).stdout.strip()
+    try:
+        lines = open(path, encoding="utf-8").read().splitlines() if path else []
+    except OSError:
+        return []
+    found = []
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith("#"):
+            try:
+                found.append(("Private pattern", re.compile(line, re.I)))
+            except re.error as exc:
+                print(f"  pii-patterns: skipping {line!r} ({exc})", file=sys.stderr)
+    return found
 
 
 def staged_files() -> list[str]:
@@ -79,6 +101,7 @@ def staged_content(path: str) -> str:
 
 def main() -> int:
     findings: list[tuple[str, str, str, int, str]] = []
+    pii_patterns = PII_PATTERNS + private_patterns()
 
     for path in staged_files():
         norm = path.replace("\\", "/")
@@ -99,7 +122,7 @@ def main() -> int:
             for label, pattern in SECRET_PATTERNS:
                 if pattern.search(line):
                     findings.append(("SECRET", path, label, lineno, line.strip()[:100]))
-            for label, pattern in PII_PATTERNS:
+            for label, pattern in pii_patterns:
                 if pattern.search(line):
                     findings.append(("PII", path, label, lineno, line.strip()[:100]))
 
