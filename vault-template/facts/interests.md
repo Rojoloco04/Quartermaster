@@ -1,6 +1,6 @@
 # Interests
 
-Used to filter the events section of the weekly digest. Inferred from the Notion
+Used to filter the events and on-sales in the daily digest. Inferred from the Notion
 mirror and Spotify listening, then corrected by your reactions to
 recommendations.
 

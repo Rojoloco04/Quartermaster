@@ -40,7 +40,7 @@ def test_owner_and_digest_read_lessons_fresh_every_turn(tmp_path: Path):
     lessons.add(lessons.lessons_path(settings), "Never book anything before 9am.")
     # Same profile object, as the bot holds one for its whole run.
     assert "Never book anything before 9am." in agent._options(owner).system_prompt["append"]
-    assert "Never book anything before 9am." in agent._options(agent.digest_profile(settings)).system_prompt["append"]
+    assert "Never book anything before 9am." in agent._options(agent.digest_profile(settings, {"type": "object"})).system_prompt["append"]
     assert agent.public_profile(settings).lessons_file is None
 
 

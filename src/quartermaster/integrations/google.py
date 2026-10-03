@@ -270,12 +270,28 @@ def list_events(
     query: str | None = None,
 ) -> str:
     """Events in [start, end) across every calendar the owner has selected."""
+    found = calendar_events(settings, start, end, account, calendar_id, query)
+    if not found:
+        return "No events in that range."
+    return "\n".join(format_event(ev, ev["_calendar_name"], ev["_calendar_id"]) for ev in found)
+
+
+def calendar_events(
+    settings: Settings,
+    start: str,
+    end: str,
+    account: str | None = None,
+    calendar_id: str | None = None,
+    query: str | None = None,
+) -> list[dict]:
+    """The raw events behind ``list_events``, sorted by start, each with
+    ``_calendar_name`` ("label/calendar") and ``_calendar_id`` added."""
     time_min = parse_when(start)
     time_max = parse_when(end, end_of_day=True)
     if time_max <= time_min:
         raise GoogleError("The end must be after the start.")
 
-    found: list[tuple[str, str]] = []
+    found: list[dict] = []
     for label in resolve_accounts(settings, account, "calendar"):
         service = _calendar(_credentials(settings, label))
         if calendar_id:
@@ -300,13 +316,10 @@ def list_events(
             for ev in events:
                 if ev.get("status") == "cancelled":
                     continue
-                key = ev["start"].get("dateTime") or ev["start"].get("date", "")
-                found.append((key, format_event(ev, f"{label}/{cal.get('summary', '')}", cal["id"])))
+                found.append({**ev, "_calendar_name": f"{label}/{cal.get('summary', '')}", "_calendar_id": cal["id"]})
 
-    if not found:
-        return "No events in that range."
-    found.sort(key=lambda pair: pair[0])
-    return "\n".join(line for _, line in found)
+    found.sort(key=lambda ev: ev["start"].get("dateTime") or ev["start"].get("date", ""))
+    return found
 
 
 def create_event(

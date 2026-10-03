@@ -121,7 +121,7 @@ def top_artists(
 
 def top_artist_names(settings: Settings, account: str | None = None) -> set[str]:
     """Every top artist across all three time ranges, lowercased - the set the
-    presale ping matches against. Up to 150 names; overlap is common."""
+    digest's on-sales match against. Up to 150 names; overlap is common."""
     sp = _client(settings, resolve_account(settings, account))
     return {
         a["name"].lower()

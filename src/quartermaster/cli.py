@@ -382,6 +382,14 @@ def cmd_push(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_backup(args: argparse.Namespace) -> int:
+    from . import game_backup
+
+    ok, summary = game_backup.run_backup(load_settings())
+    print(summary)
+    return 0 if ok else 1
+
+
 def cmd_minecraft(args: argparse.Namespace) -> int:
     from .integrations import minecraft
 
@@ -466,12 +474,6 @@ def cmd_queue(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_presale(args: argparse.Namespace) -> int:
-    from . import digest
-
-    return _run_job("presale check", digest.run_presale_check, args.dry_run, "Presale ping sent.")
-
-
 def cmd_schedule(args: argparse.Namespace) -> int:
     from . import schedule
 
@@ -481,9 +483,10 @@ def cmd_schedule(args: argparse.Namespace) -> int:
             print(f"Scheduled: {line}")
         print(
             f"\nBot + web: started at logon and kept running ({schedule.SERVICE_TASK}; qm restart starts it now). "
-            f"Notion sync: daily at {schedule.SYNC_HOUR:02d}:00. Digest: {args.digest_cadence}. "
-            f"Presale check: daily at {schedule.PRESALE_HOUR:02d}:00. "
-            f"Reconcile: daily at {schedule.RECONCILE_TIME}. Vault push: daily at {schedule.PUSH_TIME}."
+            f"Notion sync: daily at {schedule.SYNC_HOUR:02d}:00. "
+            f"Digest (with on-sales): {args.digest_cadence} at {int(settings.prefs['digest']['hour']):02d}:00. "
+            f"Reconcile: daily at {schedule.RECONCILE_TIME}. Vault push: daily at {schedule.PUSH_TIME}. "
+            f"Game server backup: daily at {schedule.BACKUP_TIME}."
         )
     elif args.action == "remove":
         for line in schedule.remove():
@@ -580,17 +583,11 @@ def main(argv: list[str] | None = None) -> int:
     p_web.add_argument("--port", type=int, default=8766)
     p_web.set_defaults(func=cmd_web)
 
-    p_digest = sub.add_parser("digest", help="build and send the weekly digest")
+    p_digest = sub.add_parser("digest", help="build and send the digest (calendar, on-sales, events, wishlist, Notion)")
     p_digest.add_argument(
         "--dry-run", action="store_true", help="print what would be sent; don't send, archive, or record it"
     )
     p_digest.set_defaults(func=cmd_digest)
-
-    p_presale = sub.add_parser("presale-check", help="check for presales opening today")
-    p_presale.add_argument(
-        "--dry-run", action="store_true", help="print what would be sent; don't send or record it"
-    )
-    p_presale.set_defaults(func=cmd_presale)
 
     p_tidy = sub.add_parser("tidy", help="propose a cleaned-up Claude page (you confirm in Discord)")
     p_tidy.add_argument("--dry-run", action="store_true", help="print the rewrite; propose nothing")
@@ -602,6 +599,9 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("push", help="commit everything in the vault and push it to its remote").set_defaults(
         func=cmd_push
+    )
+    sub.add_parser("backup", help="zip the game servers' worlds and saves to the backup drive").set_defaults(
+        func=cmd_backup
     )
 
     p_mc = sub.add_parser("minecraft", help="the Paper server friends reach over Tailscale")

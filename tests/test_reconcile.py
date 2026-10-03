@@ -81,7 +81,7 @@ def test_conflicts_are_written_shown_to_the_owner_and_cleared(settings):
     assert "## Concert tickets" in path.read_text("utf-8")
     block = agent._options(agent.owner_profile(settings)).system_prompt["append"]
     assert "Do you already have tickets" in block and "delete that entry" in block
-    assert "Concert" not in agent._options(agent.digest_profile(settings)).system_prompt["append"]
+    assert "Concert" not in agent._options(agent.digest_profile(settings, {"type": "object"})).system_prompt.get("append", "")
     reconcile.write_conflicts(settings, [])  # next run: settled
     assert reconcile.for_prompt(path) == "" and "Nothing open" in path.read_text("utf-8")
 
@@ -93,8 +93,14 @@ def test_run_applies_asks_and_dms(settings, monkeypatch):
         assert profile.name == "reconcile" and profile.tools == [] and profile.output_schema
         return agent.Reply(text="", structured={"edits": [], "conflicts": [CONFLICT]})
 
+    async def fake_send(s, text):
+        sent.append(text)
+
+    # Only Discord itself is faked: the real send_dm runs its own event loop, and
+    # called straight from the async reconcile it failed every morning it had news.
     monkeypatch.setattr(agent, "ask", fake_ask)
-    monkeypatch.setattr("quartermaster.surfaces.digest_send.send_dm", lambda s, text: sent.append(text))
+    monkeypatch.setattr("quartermaster.surfaces.digest_send._send", fake_send)
+    monkeypatch.setattr(Settings, "require", lambda self, *names: None)
     assert "Do you already have tickets" in reconcile.run_reconcile(settings, dry_run=True)
     assert sent == [] and not reconcile.conflicts_path(settings).exists()
     reconcile.run_reconcile(settings)
@@ -132,7 +138,8 @@ def test_structured_output_is_allowed_only_with_a_schema(settings):
     assert agent.check_tool(agent.reconcile_profile(settings, reconcile.SCHEMA), "StructuredOutput", {}) is None
     assert agent.check_tool(agent.parser_profile(settings, {"type": "object"}), "StructuredOutput", {}) is None
     assert agent.check_tool(agent.owner_profile(settings), "StructuredOutput", {})
-    assert agent.check_tool(agent.digest_profile(settings), "StructuredOutput", {})
+    assert agent.check_tool(agent.tidy_profile(settings), "StructuredOutput", {})
+    assert agent.check_tool(agent.digest_profile(settings, {"type": "object"}), "StructuredOutput", {}) is None
 
 
 def test_owner_is_told_to_propagate_changes():

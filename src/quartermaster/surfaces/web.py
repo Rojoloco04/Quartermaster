@@ -31,7 +31,7 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
-from .. import agent, mutes, schedule
+from .. import agent, game_backup, mutes, schedule
 from ..agent import transcript_dir
 from ..config import DEFAULTS, REPO_ROOT, Settings, _deep_merge
 from . import brain, chat
@@ -432,7 +432,7 @@ pollLog(); pollStatus();
 """
 
 
-def servers_page(key: str, status: str, log_path: Path, csrf: str) -> str:
+def servers_page(key: str, status: str, log_path: Path, csrf: str, backup: str = "") -> str:
     """One tab per game; the chosen one's status, start/stop and live console."""
     from ..integrations.game_servers import GAMES
 
@@ -447,6 +447,7 @@ def servers_page(key: str, status: str, log_path: Path, csrf: str) -> str:
 <pre id="serverlog"></pre>
 <p class="muted">The console of the current (or last) run: <code>{_e(log_path)}</code>.
 Commands go through the bot in Discord.</p>
+{f'<p class="muted">{_e(backup)}</p>' if backup else ''}
 </section>""", SERVERS_JS, SERVERS_CSS, csrf)
 
 
@@ -700,7 +701,7 @@ def file_block(vault: Path, rel: str, title: str, note: str = "") -> str:
 FACT_NOTES = {
     "facts/lessons.md": "Corrections you've given. The agent records one whenever you tell it it got something "
                         "wrong, and every reply and digest follows them.",
-    "facts/interests.md": "Filters the digest's events and the presale pings. A line you write outranks anything inferred.",
+    "facts/interests.md": "Filters the digest's events and on-sales. A line you write outranks anything inferred.",
 }
 
 
@@ -862,7 +863,10 @@ def build_app(settings: Settings, token: str | None = None, hosts: tuple[str, ..
         if key not in GAMES:
             return PlainTextResponse("No such server.", status_code=404)
         game = GAMES[key]
-        return HTMLResponse(servers_page(key, await game_status(game), game.module.log_path(settings), csrf))
+        backup = ""
+        if hasattr(game.module, "backup_sources"):  # the backup drive may need to spin up
+            backup = await asyncio.to_thread(game_backup.last_backup, settings, key)
+        return HTMLResponse(servers_page(key, await game_status(game), game.module.log_path(settings), csrf, backup))
 
     async def api_server_status(request: Request):
         game = GAMES.get(request.path_params["game"])

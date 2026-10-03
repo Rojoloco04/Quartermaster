@@ -131,6 +131,9 @@ CHAT_STYLE = (
 OWNER_LIMITS = (
     "You can read and edit files in this vault only. Quartermaster's own code, "
     "its scheduled jobs and its .env live outside it and are beyond your reach. "
+    "The owner's Minecraft and Satisfactory servers run on this PC and are "
+    "yours to run: the qm minecraft_* and satisfactory_* tools check, start, "
+    "stop and save them. "
     "In Notion, the Claude page and its sub-pages are yours: write to them "
     "freely with the qm tools, no permission needed. Any other page is the "
     "owner's, so call propose_notion_edit - it writes nothing, it shows them a "
@@ -265,15 +268,15 @@ def parser_profile(settings: Settings, schema: dict) -> Profile:
     )
 
 
-def digest_profile(settings: Settings) -> Profile:
-    """Writes the weekly digest's prose from data collectors already gathered.
+def digest_profile(settings: Settings, schema: dict) -> Profile:
+    """Picks the digest's events from candidates collectors already gathered,
+    answering in JSON (``schema``); code renders the message.
 
-    No tools: collectors are plain Python that do no reasoning, so by the time
-    this profile is asked anything it has everything it needs in the prompt.
-    Its ``cwd`` is NOT the vault: every run leaves a session file for its cwd,
-    and ``--continue`` resumes the newest one, so a digest run there made the
-    owner's next DM continue the digest instead of their own thread. The
-    vault's CLAUDE.md (tone rules) is passed in directly instead.
+    No tools: by the time this profile is asked anything, the prompt holds
+    everything it needs. Its ``cwd`` is NOT the vault: every run leaves a
+    session file for its cwd, and ``--continue`` resumes the newest one, so a
+    digest run there made the owner's next DM continue the digest instead of
+    their own thread. The vault's CLAUDE.md is passed in directly instead.
     """
     claude_md = settings.vault / "CLAUDE.md"
     rules = claude_md.read_text(encoding="utf-8") if claude_md.exists() else ""
@@ -283,9 +286,12 @@ def digest_profile(settings: Settings) -> Profile:
         tools=[],
         allowed_tools=[],
         share_session=False,
-        max_turns=1,
-        system_append=DISCORD_STYLE + (f"\n\nThe owner's standing instructions:\n{rules}" if rules else ""),
+        # A structured answer can take a second turn (see reconcile_profile).
+        max_turns=3,
+        output_schema=schema,
+        system_append=f"The owner's standing instructions:\n{rules}" if rules else "",
         lessons_file=lessons.lessons_path(settings),
+        timeout_seconds=600.0,
     )
 
 

@@ -27,9 +27,11 @@ name = "weekend"
 min_miles = 250
 max_miles = 500
 bar = "high"              # Chicago, Cincinnati, Milwaukee, Tulsa
+classification = "music"  # 500 miles holds ~8,500 events a month; only music is worth the trip
 
 [events]
-window_days = 60          # how far ahead to look for events worth travelling to
+window_days = 30          # how far ahead to look for events worth travelling to
+onsale_days = 30          # how far ahead to look for on-sales of acts you like
 
 [notion]
 stale_after_days = 90     # must ALSO look unfinished to count as stale
@@ -49,9 +51,10 @@ page_id = ""
 fresh_after_minutes = 5
 
 [digest]
-weekday = "sunday"
-hour = 18
+weekday = "sunday"        # also the day it lists wishlist links it couldn't read
+hour = 8
 calendar_days_ahead = 7
+ignore_calendar = []      # all-day entries with these in the title are reminders, not plans
 
 [public]
 replies_per_hour = 20     # when people in your server just talk to the bot; spends your subscription
@@ -59,3 +62,7 @@ replies_per_hour = 20     # when people in your server just talk to the bot; spe
 [minecraft]
 memory_gb = 4             # heap for the Paper server; you play on the same machine
 dir = ""                  # blank: %LOCALAPPDATA%\quartermaster\minecraft
+
+[backups]
+dir = 'F:\Backups\servers'  # nightly zips of the game servers (qm backup); the live installs stay put
+keep = 14                   # zips kept per game; a night where nothing changed writes none

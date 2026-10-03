@@ -2,7 +2,7 @@
 
 Spotify's "top artists" is a short, recent window over one app. Last.fm has the
 whole scrobble history across every player, which is a better answer to "do I
-actually like this artist" for the presale ping and the digest's events.
+actually like this artist" for the digest's on-sales and events.
 
 Public data, so no OAuth: an API key and a username. The key travels in the
 query string, so no error message here ever includes the request URL.
@@ -18,7 +18,7 @@ API = "https://ws.audioscrobbler.com/2.0/"
 PERIODS = ("overall", "7day", "1month", "3month", "6month", "12month")
 
 # An artist scrobbled a handful of times (a playlist shuffle, one curious
-# listen) is not a taste signal worth pinging a presale over.
+# listen) is not a taste signal worth an on-sale line.
 MIN_PLAYS = 5
 
 

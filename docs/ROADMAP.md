@@ -130,6 +130,13 @@ Streaming with NVENC hardware transcoding.
 - 2026-09-22: calendar edit/delete, reconcile on request from a DM, the
   **Minecraft** server (DMs, op-gated guild control with in-game-proven links,
   the **Servers** tab), and **chat** for friends who mention the bot.
+- 2026-10-03: the **digest rebuilt** as JSON that code renders (fixed layout,
+  bold acts, one line per show however many listings it's sold as); the model
+  only picks new events and says why. Daily at 08:00, a 30-day window that
+  actually reaches 30 days, **on-sales folded in** and shown once (the old
+  presale ping's filter was ignored by Ticketmaster, so it repeated), `state.db`
+  pruned. **Weather dropped**: the owner checks an app, and a text forecast
+  wasn't worth the tokens. Nightly **game server backups** to F:.
 
 ### Planned
 
@@ -152,7 +159,9 @@ Streaming with NVENC hardware transcoding.
   Piloting with Minecraft (Paper) since 2026-09-22: `qm minecraft`, and the bot
   starts/stops it and runs allow-listed commands over RCON. Satisfactory
   added 2026-09-22 (`qm satisfactory`, DM tools, a /servers tab; on this PC for
-  now, a separate server box later). Next, if wanted: Satisfactory from guild
+  now, a separate server box later). Nightly zips of both to the F: HDD added
+  2026-10-03 (`qm backup`, 05:00, skip if unchanged, keep 14): the vault push
+  never covered them. Next, if wanted: Satisfactory from guild
   channels. It has no in-game whisper to prove a link with, so control would
   be owner-only or by a Discord role.
 - **Persistent voice-mute timers.** "Mute for 30s" is scheduled in memory today, so a

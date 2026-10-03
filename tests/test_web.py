@@ -95,7 +95,7 @@ def test_refuses_to_serve_beyond_localhost_without_a_token(settings, monkeypatch
 def test_digest_profile_never_runs_in_the_vault(settings):
     # A digest session in the vault became the newest one there, and the owner's
     # next DM (continue_conversation) resumed it instead of their own thread.
-    profile = agent.digest_profile(settings)
+    profile = agent.digest_profile(settings, {"type": "object"})
     assert profile.cwd != settings.vault and settings.vault not in profile.cwd.parents
 
 

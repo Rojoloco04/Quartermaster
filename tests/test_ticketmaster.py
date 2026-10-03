@@ -34,18 +34,20 @@ def settings(tmp_path: Path) -> Settings:
     )
 
 
-def event(id_: str, lat: float, lon: float, attraction: str | None = None) -> dict:
+def event(id_: str, lat: float, lon: float, attraction: str | None = None, starts_at: str = "2026-10-01T20:00:00Z") -> dict:
     return {
         "id": id_,
         "name": f"Show {id_}",
         "url": f"https://example.com/{id_}",
-        "starts_at": "2026-10-01T20:00:00Z",
-        "onsale_start": "2026-09-01T10:00:00Z",
-        "venue_name": "Some Venue",
+        "starts_at": starts_at,
+        "local_date": starts_at[:10],
+        "onsale_at": "2026-09-01T10:00:00Z",
+        "venue": "Some Venue",
         "city": "Somewhere",
         "lat": lat,
         "lon": lon,
-        "attraction": attraction,
+        "acts": [attraction] if attraction else [],
+        "presales": [],
     }
 
 
@@ -67,7 +69,7 @@ class TestBandBucketing:
         local_event = event("local1", 38.63, -90.20)  # basically at home
         chicago_event = event("chi1", 41.8781, -87.6298)
 
-        def fake_search(settings, *, radius_miles, start=None, end=None, onsale_start=None, onsale_end=None):
+        def fake_search(settings, *, radius_miles, start=None, end=None, onsale_on=None, classification=""):
             if radius_miles == 60:
                 return [local_event]
             if radius_miles == 250:
@@ -87,7 +89,7 @@ class TestBandBucketing:
         # must still end up in exactly one band's list.
         borderline = event("b1", 41.8781, -87.6298)
 
-        def fake_search(settings, *, radius_miles, start=None, end=None, onsale_start=None, onsale_end=None):
+        def fake_search(settings, *, radius_miles, start=None, end=None, onsale_on=None, classification=""):
             return [borderline] if radius_miles >= 250 else []
 
         monkeypatch.setattr(ticketmaster, "search_events", fake_search)
@@ -104,15 +106,56 @@ class TestBandBucketing:
         banded = ticketmaster.events_for_bands(settings, window_days=60)
         assert sum(len(v) for v in banded.values()) == 0
 
-    def test_a_band_is_capped_rather_than_dumping_everything_on_the_model(self, settings, monkeypatch):
-        # A farther band can legitimately return close to Ticketmaster's
-        # 1000-result deep-paging cap - all of it must not land in the prompt.
-        many = [event(f"e{i}", 38.63, -90.20) for i in range(200)]
+    def test_a_window_past_the_paging_cap_is_split_until_each_half_fits(self, settings, monkeypatch):
+        # 500 miles holds ~1000 events a day: a month queried whole returned its first day only.
+        from datetime import datetime, timezone
 
-        monkeypatch.setattr(ticketmaster, "search_events", lambda *a, **k: many)
+        windows = []
 
-        banded = ticketmaster.events_for_bands(settings, window_days=60)
-        assert len(banded["local"]) == ticketmaster.MAX_EVENTS_PER_BAND
+        def fake_get(params, page):
+            start, end = params["startDateTime"], params["endDateTime"]
+            windows.append((start, end, page))
+            days = (datetime.fromisoformat(end[:-1]) - datetime.fromisoformat(start[:-1])).days
+            total = 600 * max(days, 1)
+            return {"page": {"totalElements": total, "totalPages": -(-min(total, 1000) // 200)},
+                    "_embedded": {"events": [{"id": f"{start}-{page}", "name": "x"}]}}
+
+        monkeypatch.setattr(ticketmaster, "_get", fake_get)
+        start = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        found = ticketmaster.search_events(settings, radius_miles=500, start=start,
+                                           end=datetime(2026, 10, 5, tzinfo=timezone.utc))
+        leaves = {(s_, e) for s_, e, page in windows if page > 0}
+        assert len(leaves) == 4  # four one-day windows, each paged to the end
+        assert len(found) == 4 * 3  # 600 a day = 3 pages of 200 each
+
+
+class TestOnsales:
+    def test_one_query_per_day_by_onsale_date_deduped_and_in_range(self, settings, monkeypatch):
+        from datetime import date
+
+        days = []
+
+        def fake_search(settings, *, radius_miles, onsale_on=None, **_):
+            days.append(onsale_on)
+            far = event("far", 47.6, -122.3)  # Seattle: beyond the farthest band
+            return [event("e1", 38.63, -90.20), far]
+
+        monkeypatch.setattr(ticketmaster, "search_events", fake_search)
+        found = ticketmaster.onsales_between(settings, date(2026, 10, 3), 3)
+        assert days == [date(2026, 10, 3), date(2026, 10, 4), date(2026, 10, 5)]
+        assert [e["id"] for e in found] == ["e1"]
+
+    def test_normalize_keeps_the_presales_and_the_venues_local_date(self):
+        raw = {"id": "x", "name": "LCS", "url": "u",
+               "dates": {"start": {"localDate": "2026-10-03", "localTime": "16:00:00", "dateTime": "2026-10-03T20:00:00Z"}},
+               "sales": {"public": {"startDateTime": "2026-07-25T17:00:00Z"},
+                         "presales": [{"name": "Mastercard Presale", "startDateTime": "2026-07-24T17:00:00Z"}]},
+               "_embedded": {"venues": [{"name": "Gas South Arena", "city": {"name": "Duluth"}}],
+                             "attractions": [{"name": "League of Legends"}]}}
+        e = ticketmaster._normalize(raw)
+        assert (e["local_date"], e["local_time"], e["acts"]) == ("2026-10-03", "16:00", ["League of Legends"])
+        assert e["presales"] == [{"name": "Mastercard Presale", "starts_at": "2026-07-24T17:00:00Z"}]
+        assert e["onsale_at"] == "2026-07-25T17:00:00Z" and e["venue"] == "Gas South Arena"
 
 
 class TestMuteScheme:

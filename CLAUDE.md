@@ -7,16 +7,20 @@ anything. `docs/GUIDE.md` is how to use it (also served by `qm web`);
 State as of 2026-09-22: Phases 1–5 done (Phase 5: service wrapper, daily vault
 push, Tailscale; restic and Uptime Kuma dropped; a fresh clone of the vault
 remote matched the local vault), plus a Satisfactory server beside Minecraft
-(live 2026-09-22). Next: Phase 6 in `docs/ROADMAP.md`. 404 tests.
+(live 2026-09-22), nightly game server backups to F: (2026-10-03), and the
+digest rebuilt as code-rendered JSON with on-sales folded in (2026-10-03).
+Next: Phase 6 in `docs/ROADMAP.md`.
 The vault's system folder is `System/` (was `90-System/` until 2026-09-22).
 
 **Open right now**
 - The bot stays native, not in Docker: a Linux container would split the shared
   session (whose folder is named after the vault's Windows path) and would need
   `procs`/`schedule` redone.
-- First unattended morning of the windowless jobs is 2026-09-23 (sync 07:00,
-  reconcile 07:30, presale 08:00); the sync and reconcile tasks had never fired
-  on schedule before. Check the dashboard's job results.
+- First morning of the rebuilt digest is 2026-10-04 at 08:00 (the presale
+  task is retired into it). Check it arrived, its format, and that the
+  dashboard shows the digest job green. The 07:30 reconcile had failed every
+  morning it found a conflict since 2026-09-27 (fixed 2026-10-03); check it
+  DMs again.
 - Last.fm is configured but the account started 2026-09-22 with 0 scrobbles, so
   it adds nothing until Spotify scrobbling fills it. Spotify stays until then
   (queued: remove it once Last.fm can replace it).
@@ -92,9 +96,9 @@ prints it and its path. For each open item, one at a time:
 
 A personal agent sharing one markdown vault and one Claude subscription:
 
-1. **A weekly digest** — Discord DM: calendar, weather, events worth travelling to,
-   wishlist price drops, stale Notion pages. Running **daily** as a proof of
-   concept; `qm schedule install --digest-cadence weekly` switches to Sundays.
+1. **A daily digest** — Discord DM at 08:00: calendar, on-sales of acts the
+   owner likes, events worth travelling to, wishlist price drops, stale Notion
+   pages. `qm schedule install --digest-cadence weekly` switches to Sundays.
 2. **An assistant** — Discord DMs and Claude Code, sharing one conversation.
 3. **A Discord bot** — natural-language moderation and expression.
 
@@ -114,7 +118,7 @@ is enabled per clone with `git config core.hooksPath .githooks`.
 
 ```
 src/quartermaster/
-├── cli.py            qm doctor/init/sync/bot/web/serve/digest/presale-check/reconcile/push/quit/restart/schedule/mute/auth/mcp
+├── cli.py            qm doctor/init/sync/bot/web/serve/digest/presale-check/reconcile/push/backup/quit/restart/schedule/mute/auth/mcp
 ├── config.py         secrets from .env, preferences from the vault's System/config.toml
 ├── agent.py          Agent SDK wrapper; Profile + check_tool are the security boundary
 ├── db.py             state.db — machine state only, rebuildable
@@ -126,6 +130,7 @@ src/quartermaster/
 ├── reconcile.py      daily: dedupe/tidy facts + lessons, write and DM conflicts
 ├── lessons.py        facts/lessons.md: corrections, read into every owner turn and digest
 ├── vault_push.py     daily: commit the whole vault and push it (its only backup); never forces
+├── game_backup.py    daily: zip each game server's world/saves to the backup drive (F:)
 ├── procs.py          `qm quit`/`restart`, the `qm serve` supervisor, the one-instance locks
 ├── schedule.py       Windows Task Scheduler wiring (schtasks.exe)
 ├── discord_ops.py    OpsPlan, permissions, hierarchy, matching (pure, well-tested)
@@ -151,7 +156,7 @@ vault-template/       copied into a new vault by `qm init`
 ./.venv/Scripts/qm.exe restart             # restart bot + web (through the logon task; jobs untouched)
 ./.venv/Scripts/qm.exe bot                 # foreground bot, for debugging (refused while one runs)
 ./.venv/Scripts/qm.exe reconcile --dry-run # what the daily knowledge check would change and ask
-./.venv/Scripts/qm.exe digest --dry-run    # preview the digest; also presale-check --dry-run
+./.venv/Scripts/qm.exe digest --dry-run    # preview the digest (real API calls, ~2 min)
 ./.venv/Scripts/qm.exe schedule install --digest-cadence daily   # or weekly
 ./.venv/Scripts/python.exe -m pytest tests/ -q
 ```
@@ -184,8 +189,8 @@ and output to `bot.out`/`web.out` beside the log, and reports FAILED with that
 output's tail if one exits within 4s. Live-verified 2026-09-22.
 
 **Scheduled tasks** (logged-in only): the service at logon, Notion sync 07:00 daily, reconcile 07:30
-daily, presale check 08:00 daily, Claude page tidy Sundays 09:00, digest at
-`digest.hour` daily or weekly, vault push 23:00 daily. Each is registered as
+daily, Claude page tidy Sundays 09:00, digest at `digest.hour` (08:00) daily
+or weekly, vault push 23:00 daily, game server backup 05:00 daily. Each is registered as
 `pythonw -m quartermaster.cli <job>`, never `qm.exe` (a console program: every
 run opened a Windows Terminal, noticed at the 2026-09-22 18:00 digest); under
 pythonw, `cli.main` re-runs the job once as python.exe with `CREATE_NO_WINDOW`,
@@ -420,13 +425,37 @@ server's `satisfactory_status/start/stop/save`, a /servers tab. Deliberate:
   `stop` (saved, exited in 8s), start autoloaded the session, the /servers tab,
   and it outlived `qm restart`. Not yet: a DM, or a friend joining over Tailscale.
 
+## Game server backups (`game_backup.py`)
+
+`qm backup`, daily 05:00: one zip per game in `backups.dir`
+(`F:\Backups\servers\<game>\<YYYY-MM-DD_HHMMSS>.zip`; F: is the HDD, the live
+installs stay on the SSD). A game opts in with `backup_sources(settings)`
+((folder, path inside it) pairs, empty before setup) and optionally
+`backup_hold(settings)`, a context manager around the copy. Deliberate:
+- Never writes to a source. Minecraft's hold, only while running, is RCON
+  `save-off`, `save-all flush`, the copy, `save-on` in a `finally`; an
+  unreachable RCON fails that game rather than copy a torn world.
+  `session.lock` is skipped (Paper holds it exclusively).
+- Satisfactory has no hold: saving first would add a save file every night.
+  Its sources are the server's saves, blueprints, `ServerSettings.*.sav` (claim,
+  admin password) and `qm-server.json`; never the owner's client saves.
+- Skip if unchanged: the zip's comment holds a sha256 of names + contents; a run
+  that hashes the same as the newest zip writes nothing. Written as `.partial`
+  and renamed when complete. Newest `backups.keep` (14) kept per game.
+- One game failing doesn't stop the others; any failure or a missing drive
+  exits 1, which the dashboard's job table shows red. Each /servers tab shows
+  its last backup.
+- Live-verified 2026-10-03: both servers zipped to F: (Minecraft 6.5MB,
+  Satisfactory 45MB, ~4s), a second run skipped both, and a run with Minecraft
+  up flushed it and left autosave on. Not yet: the 05:00 task firing.
+
 ## Mutes
 
 `System/muted.md`, one `kind:key` per line, matching nested ids and ignoring
 case. A mute without a kind (`artist/Tool`) covers every kind, so "stop telling
-me about Tool" silences both the digest line and the presale ping. There is no
+me about Tool" silences both its events and its on-sales. There is no
 "not interested" list anywhere else: `facts/interests.md` holds positives only
-(the presale matcher also ignores any "Not interested" heading, defensively).
+(the taste matcher also ignores any "Not interested" heading, defensively).
 
 ## Dashboard (`qm web`)
 
@@ -491,20 +520,59 @@ to run there) made the next DM continue the digest. Non-owner profiles use
 CLAUDE.md through its system prompt instead. "Start fresh" works by running one turn
 without `continue_conversation`, which makes a new newest session.
 
-## The digest (Phase 4)
+## The digest (`digest/`)
 
-`digest.build_payload` runs independent collectors — calendar (Google), weather
-(Open-Meteo, no key: 7 days at `home`, each day's `rough` reasons decided in
-code; the model always prints the week and adds ⚠️ only where a rough day
-meets a plan), events
-(Ticketmaster, bucketed into distance bands by true haversine distance, capped at
-`MAX_EVENTS_PER_BAND`=60 because an uncapped run once built a 1.15MB, $2.23
-prompt), wishlist price drops, stale Notion pages — filters everything through
-the mute list, and hands one JSON blob to `agent.digest_profile` (no tools,
-Sonnet). Collectors do no reasoning; the model only phrases.
+Daily at 08:00, one DM. `digest.build` runs the collectors and returns the
+digest's JSON; `digest/render.py` turns it into the message. Code writes every
+header, name, date and link (`###` headings, `-#` subtext, bold acts, masked
+`[label](<url>)` links so twenty links aren't twenty embeds), so the layout is
+identical every day. Before 2026-10-03 the model wrote the whole message and
+its format drifted daily; weather was dropped the same day (the owner has an
+app for it). Sections: calendar, on sale soon, events, wishlist, Notion.
 
-- **Each collector catches `Exception`** and degrades to an "unavailable" line:
-  googleapiclient, spotipy and httpx errors are not `RuntimeError`s.
+- **The model only picks events.** `pick_events` sends the *new* event groups
+  (never offered before) with interests and top artists to `digest_profile`
+  (no tools, `output_schema` = `PICK_SCHEMA`); it returns `{id, why}` per pick,
+  `why` at most ~10 words, ids are per-run handles (`e1`...). On-sales,
+  prices, calendar and stale pages never reach a model. A failed pick leaves
+  the events unconsidered (offered again tomorrow) and the section says so.
+- **The JSON and `state.db` share a shape.** A `listings` row is one
+  Ticketmaster listing with the same field names the JSON uses (`acts`,
+  `local_date`, `venue`, `onsale_at`, `presales`...); a digest item is a
+  *group* of listings (`digest/listings.py`: same venue, same headliner, within
+  3 days), one line with a link per listing, labelled by the part of the
+  names that differs ("Friday Pass", "Two-day Bundle") or by date/time. Each
+  day's JSON is archived beside its markdown in `digests/`.
+- **What comes back when** (daily, 30-day windows): an event when first found
+  if picked, then once more in the week it happens (`classify_events`; an
+  event the model passed over is never re-offered); an on-sale once
+  (`onsale_shown_at`); a stale page at most weekly; unreadable wishlist links
+  only on `digest.weekday`. Mutes still silence anything for good.
+- **Getting a month out of Ticketmaster.** Its deep-paging cap is 1000
+  results and 500 miles holds about that many events a day, so the old
+  month-long query returned one day. `search_events` halves a date window
+  until each half fits; the weekend band asks for `classification = "music"`
+  (8.5k events a month otherwise). `offer` caps what the model sees at
+  `MAX_OFFERED_PER_BAND` (60) per band per day, taste matches first, then
+  spread across the month (first show of each date, then the second...), so
+  a busy month is covered over a few mornings. Soonest-first offered only
+  tonight's shows every day.
+- **On-sales** query `onsaleOnStartDate` once per day for 30 days.
+  `onsaleStartDateTime` (used before) is silently ignored by the API: the old
+  "presale today" ping was really the soonest events in range, which is why
+  the same LCS listings came back four mornings running. Taste-filtered in
+  code (Spotify/Last.fm top artists, whole words of `facts/interests.md`
+  outside any "Not interested" heading), capped at `MAX_ONSALE_ITEMS`.
+- **The calendar** leaves out all-day entries whose title contains a word in
+  `digest.ignore_calendar` (set in the vault's config: names are personal).
+- **`state.db` is pruned after each sent digest** (`db.prune`): listings 30
+  days after their date, price checks after a year, decided Notion proposals
+  after 90 days, surfaced rows 180 days after last raised. ~1MB in its first
+  11 days unpruned. Schema v3 migrated v2's `events_seen` and event/presale
+  `surfaced` rows into `listings` (v2 counted every event handed to the model
+  as surfaced, so those became "considered", not "shown").
+- **Each collector catches `Exception`** and degrades to a "Couldn't check"
+  line: googleapiclient, spotipy and httpx errors are not `RuntimeError`s.
 - **The wishlist is a plain Notion page, not a database** (`wishlist.page_id`).
   `prices.py` walks its blocks for `rich_text[].href` or `bookmark.url`; unlinked
   items are skipped. Prices come from JSON-LD `Product` markup only; a page
@@ -514,18 +582,14 @@ Sonnet). Collectors do no reasoning; the model only phrases.
   anchor), which is why `prices.py` reads raw blocks. The general mirror still
   has this gap.
 - **Mute ids:** `event:artist/<name>/<id>` (muting `event:artist/Tool` mutes every
-  Tool show), `presale:artist/...` (separate namespace on purpose),
+  Tool show), `presale:artist/...` for on-sales (separate namespace on purpose),
   `price:<block id>`, `stale:<full page id>`.
-- **`--dry-run`** makes real API calls and records observations (`price_history`,
-  `events_seen`) but never increments `surfaced.times_shown`, sends, or archives.
-- **The presale check is quiet and taste-filtered.** Ticketmaster returns every
-  public on-sale within 500mi (~1000/day, the deep-paging cap); only events whose
-  billed acts are a Spotify top artist (all three time ranges) or are named as a
-  whole word in `facts/interests.md` are sent, capped at `MAX_PRESALE_LINES`.
-  Unfiltered, it once DM'd ~1000 events. Nothing to report sends nothing; a
-  failure is logged, never DM'd.
+- **`--dry-run`** makes real API calls and the model call, and records
+  observations (listings, `price_history`) but marks nothing shown or
+  considered, sends nothing and archives nothing. A full run takes ~2 min
+  (~60 Ticketmaster requests).
 - Repeated dev runs can hit the Pro plan's monthly spend cap; that fails like any
-  model error (nothing sent).
+  model error.
 
 ## Integrations (Phase 3)
 

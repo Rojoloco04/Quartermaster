@@ -25,7 +25,7 @@ server = MCPServer("qm")
 
 @server.tool()
 def queue_change(description: str, source: str = "you") -> str:
-    """Queue a change to Quartermaster itself - the digest, presale pings, the
+    """Queue a change to Quartermaster itself - the digest, the
     bot's behaviour, schedules, integrations, anything about how this assistant
     works. You cannot change its code; this is how a change gets made: the
     owner works the queue in Claude Code. Use it whenever the owner wants

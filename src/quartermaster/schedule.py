@@ -26,23 +26,22 @@ from .config import REPO_ROOT, Settings
 SYNC_TASK = "Quartermaster Notion Sync"
 TIDY_TASK = "Quartermaster Claude Page Tidy"
 DIGEST_TASK = "Quartermaster Digest"
-PRESALE_TASK = "Quartermaster Presale Check"
 RECONCILE_TASK = "Quartermaster Reconcile"
 PUSH_TASK = "Quartermaster Vault Push"
+BACKUP_TASK = "Quartermaster Server Backup"
 SERVICE_TASK = "Quartermaster Service"
-TASKS = (SERVICE_TASK, SYNC_TASK, TIDY_TASK, DIGEST_TASK, PRESALE_TASK, RECONCILE_TASK, PUSH_TASK)
+TASKS = (SERVICE_TASK, SYNC_TASK, TIDY_TASK, DIGEST_TASK, RECONCILE_TASK, PUSH_TASK, BACKUP_TASK)
+# Tasks earlier versions registered: deleted by install and remove. The
+# presale check was folded into the daily digest on 2026-10-03.
+RETIRED_TASKS = ("Quartermaster Presale Check",)
 
-# Before the presale check and the digest, so the stale-page scan reads a
-# mirror that is at most a day old.
+# Before the digest, so the stale-page scan reads a mirror that is at most a
+# day old.
 SYNC_HOUR = 7
 
 # Weekly, Sunday morning: the owner is around to confirm the replace, and it
-# lands well before the Sunday evening digest.
+# lands after the morning digest.
 TIDY_DAY, TIDY_HOUR = "SUN", 9
-
-# A same-day presale ping only helps if it lands before the ticket window
-# it's warning about - early morning, well ahead of typical on-sale times.
-PRESALE_HOUR = 8
 
 # After the sync (so it compares facts with a fresh mirror) and before the
 # digest, so the digest reads reconciled facts.
@@ -52,6 +51,10 @@ RECONCILE_TIME = "07:30"
 # digest, so one commit carries the day's changes. The PC stays on, so a fixed
 # time is fine; a missed run is picked up by the next one.
 PUSH_TIME = "23:00"
+
+# The game servers' zips to the backup drive. Early morning, when friends are
+# least likely to be on (a running Minecraft server pauses autosave for the copy).
+BACKUP_TIME = "05:00"
 
 
 @dataclass(frozen=True)
@@ -71,8 +74,8 @@ def _job(subcommand: str) -> list[str]:
 def build_tasks(settings: Settings, digest_cadence: str) -> list[ScheduledTask]:
     """Pure: what would be scheduled, without touching the OS. `digest_cadence`
     is a proof-of-concept knob - `daily` for now, `weekly` once the owner is
-    happy with what it sends. The presale check is always daily regardless;
-    that cadence was never in question, and neither is the daily sync's."""
+    happy with what it sends. The digest's hour is ``digest.hour`` (08:00:
+    on-sales are in it, and must land before the ticket windows open)."""
     if digest_cadence not in ("daily", "weekly"):
         raise ValueError(f"digest_cadence must be 'daily' or 'weekly', got {digest_cadence!r}")
 
@@ -88,11 +91,9 @@ def build_tasks(settings: Settings, digest_cadence: str) -> list[ScheduledTask]:
         ScheduledTask(SYNC_TASK, _job("sync"), ["/sc", "daily", "/st", f"{SYNC_HOUR:02d}:00"]),
         ScheduledTask(TIDY_TASK, _job("tidy"), ["/sc", "weekly", "/d", TIDY_DAY, "/st", f"{TIDY_HOUR:02d}:00"]),
         ScheduledTask(DIGEST_TASK, _job("digest"), digest_schedule),
-        ScheduledTask(
-            PRESALE_TASK, _job("presale-check"), ["/sc", "daily", "/st", f"{PRESALE_HOUR:02d}:00"]
-        ),
         ScheduledTask(RECONCILE_TASK, _job("reconcile"), ["/sc", "daily", "/st", RECONCILE_TIME]),
         ScheduledTask(PUSH_TASK, _job("push"), ["/sc", "daily", "/st", PUSH_TIME]),
+        ScheduledTask(BACKUP_TASK, _job("backup"), ["/sc", "daily", "/st", BACKUP_TIME]),
     ]
 
 
@@ -163,16 +164,22 @@ def install(settings: Settings, digest_cadence: str = "weekly") -> list[str]:
         ]
         subprocess.run(cmd, check=True, capture_output=True, text=True)
         run.append(" ".join(cmd))
-    return run
+    return run + _delete(RETIRED_TASKS, only_existing=True)
 
 
-def remove() -> list[str]:
+def _delete(names, only_existing: bool = False) -> list[str]:
     run: list[str] = []
-    for name in TASKS:
+    for name in names:
+        if only_existing and subprocess.run(["schtasks", "/query", "/tn", name], capture_output=True).returncode:
+            continue
         cmd = ["schtasks", "/delete", "/tn", name, "/f"]
         subprocess.run(cmd, capture_output=True, text=True)  # "task not found" is fine here
         run.append(" ".join(cmd))
     return run
+
+
+def remove() -> list[str]:
+    return _delete(TASKS + RETIRED_TASKS)
 
 
 def task_info() -> list[dict]:

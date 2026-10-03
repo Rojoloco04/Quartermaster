@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from quartermaster.config import Settings
-from quartermaster.schedule import DIGEST_TASK, PRESALE_HOUR, PRESALE_TASK, SYNC_HOUR, SYNC_TASK, build_tasks
+from quartermaster.schedule import DIGEST_TASK, RETIRED_TASKS, SYNC_HOUR, SYNC_TASK, TASKS, build_tasks
 
 
 @pytest.fixture
@@ -37,18 +37,12 @@ class TestBuildTasks:
         assert digest.schedule_args == ["/sc", "daily", "/st", "18:00"]
         assert "/d" not in digest.schedule_args
 
-    def test_presale_task_is_always_daily_regardless_of_digest_cadence(self, settings):
-        for cadence in ("daily", "weekly"):
-            tasks = build_tasks(settings, cadence)
-            presale = next(t for t in tasks if t.name == PRESALE_TASK)
-            assert presale.schedule_args == ["/sc", "daily", "/st", f"{PRESALE_HOUR:02d}:00"]
-
-    def test_commands_invoke_qm_digest_and_qm_presale_check(self, settings):
+    def test_presales_are_in_the_digest_not_a_task_of_their_own(self, settings):
         tasks = build_tasks(settings, "weekly")
-        digest = next(t for t in tasks if t.name == DIGEST_TASK)
-        presale = next(t for t in tasks if t.name == PRESALE_TASK)
-        assert digest.command[-1] == "digest"
-        assert presale.command[-1] == "presale-check"
+        assert next(t for t in tasks if t.name == DIGEST_TASK).command[-1] == "digest"
+        assert not any("presale" in t.command[-1] for t in tasks)
+        # The old task is deleted on install, and never listed on the dashboard.
+        assert "Quartermaster Presale Check" in RETIRED_TASKS and not set(RETIRED_TASKS) & set(TASKS)
 
     def test_every_job_runs_windowless(self, settings):
         # qm.exe is a console program: registered as it, each job opened a
@@ -61,7 +55,7 @@ class TestBuildTasks:
         sync = next(t for t in build_tasks(settings, "weekly") if t.name == SYNC_TASK)
         assert sync.command[-1] == "sync"
         assert sync.schedule_args == ["/sc", "daily", "/st", f"{SYNC_HOUR:02d}:00"]
-        assert SYNC_HOUR < PRESALE_HOUR
+        assert SYNC_HOUR < 8  # the digest's default hour
 
 
 def test_service_task_runs_windowless_forever_and_once():

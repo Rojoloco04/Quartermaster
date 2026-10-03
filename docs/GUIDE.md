@@ -51,24 +51,37 @@ code, schedules or `.env`, and it will tell you so rather than pretend.
 Say "stop telling me about X" and it's gone for good. Mutes live in
 `System/muted.md`, one per line; delete a line to un-mute.
 
-- `artist/Tool`: everything about Tool, digest and presale pings alike.
-- `event:artist/Tool`: only the digest's event lines for Tool.
+- `artist/Tool`: everything about Tool, events and on-sales alike.
+- `event:artist/Tool`: only Tool's events; `presale:artist/Tool`: only its on-sales.
 - `stale:<page id>`, `price:<block id>`: one stale page, one wishlist item.
 
 From a terminal: `qm mute artist/Tool --reason "not my thing"`.
 
-## The digest and presale pings
+## The digest
 
-- **Digest**: a DM with your week ahead, a 7-day forecast for home (⚠️ on days
-  where the weather meets a plan), events worth travelling to, wishlist
-  price drops and Notion pages that look abandoned. Daily for now; weekly on
-  Sundays once `qm schedule install --digest-cadence weekly` is run.
-- **Presale ping**: 08:00, only for artists in your Spotify top artists or named
-  in `facts/interests.md`, at most 10. Nothing to report means no message.
+One DM every morning at 08:00, in the same layout every day:
+
+- **📅 Calendar**: the next 7 days. All-day entries whose title contains a word
+  in `digest.ignore_calendar` (reminders, anniversaries) are left out.
+- **🎟️ On sale soon**: public on-sales in the next 30 days for acts in your
+  Spotify/Last.fm top artists or named in `facts/interests.md`, with any
+  presale, the show's date and a ticket link. Each one is shown once.
+- **🎤 Events**: shows in the next 30 days worth knowing about, by distance
+  (local, day trip, weekend; the weekend band is music only). Each shows when
+  first found, and once more in the week it happens. One show sold as several
+  listings (day passes and a bundle) is one line with a link per listing.
+- **💸 Wishlist**: price drops; on Sundays, also the links it couldn't read.
+- **🗂️ Notion**: pages that look abandoned, at most once a week each.
+
+Code builds every line; the model only picks which new events are worth one,
+and writes the few words in italics saying why. Each day's digest is archived
+in the vault's `digests/` as markdown and as JSON.
+
 - Tune what counts as interesting in `facts/interests.md`; a line you write by
-  hand outranks anything inferred. Preferences (home, distance bands, digest
-  hour) are in `System/config.toml`.
-- Preview without sending: `qm digest --dry-run`, `qm presale-check --dry-run`.
+  hand outranks anything inferred. Preferences (home, distance bands, the 30
+  days, digest hour) are in `System/config.toml`.
+- Preview without sending: `qm digest --dry-run`.
+- `qm schedule install --digest-cadence weekly` makes it Sundays only.
 
 ## Moderation (in a server)
 
@@ -145,6 +158,25 @@ There's no console from chat. Guild channels can't control it yet.
   that beats the allow: delete any rule named after the exe.
 - `qm quit` leaves it running. Its console is its tab on the Servers page.
 
+## Game server backups
+
+`qm backup` zips each server's world or saves onto the backup drive, one zip
+per game: `F:\Backups\servers\<game>\<date>_<time>.zip` (`backups.dir`). It
+runs daily at 05:00 on its own. A night where nothing changed writes nothing,
+and only the newest 14 zips per game are kept (`backups.keep`). Each tab on
+the Servers page says when its last backup was.
+
+- Minecraft: the world, `server.properties`, `ops.json`, the whitelist and ban
+  lists. If the server is up, autosave is paused for the few seconds of the
+  copy, after everything is flushed to disk.
+- Satisfactory: the server's saves and blueprints, `ServerSettings.7777.sav`
+  (its claim and admin password) and `qm-server.json`. Your own single-player
+  saves aren't included.
+- Restoring: stop the server, unzip over its folder (Minecraft: the server
+  folder; Satisfactory: `%LOCALAPPDATA%\FactoryGame\Saved\SaveGames`, plus
+  `qm-server.json` into the server folder).
+- If F: isn't there the job fails, and the dashboard shows it red.
+
 ## Seeing what it's doing
 
 - `qm web` opens a dashboard at http://127.0.0.1:8766: whether the bot is up,
@@ -187,8 +219,8 @@ There's no console from chat. Guild channels can't control it yet.
   supervisor and any job mid-run. They stay stopped until `qm restart` or your
   next logon.
 - `qm schedule install --digest-cadence daily` (or `weekly`) registers the
-  service (at logon), the Notion sync (07:00), knowledge reconcile (07:30), presale check (08:00), digest
-  and vault push (23:00). `qm schedule status` shows them. They run with no
+  service (at logon), the Notion sync (07:00), knowledge reconcile (07:30), digest (08:00),
+  vault push (23:00) and game server backup (05:00). `qm schedule status` shows them. They run with no
   window; their output is in the log (and on the dashboard).
 - `qm push` commits everything in the vault and pushes it to its private
   remote; that remote is the vault's backup. It runs daily at 23:00 on its own.

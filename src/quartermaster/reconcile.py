@@ -245,5 +245,7 @@ async def reconcile(settings: Settings, *, dry_run: bool = False, notify: bool =
     if notify:
         from .surfaces.digest_send import send_dm
 
-        send_dm(settings, message)
+        # send_dm runs its own event loop; called straight from this coroutine it
+        # raised "asyncio.run() cannot be called from a running event loop".
+        await asyncio.to_thread(send_dm, settings, message)
     return message

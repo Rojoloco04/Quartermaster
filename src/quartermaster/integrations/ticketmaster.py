@@ -2,7 +2,7 @@
 
 No account, no OAuth: one API key from developer.ticketmaster.com. The free
 tier is 5,000 calls/day at 5 requests/second, deep paging capped at
-``size * page < 1000`` — plenty for a handful of band/presale queries a day,
+``size * page < 1000`` (see ``search_events`` for how a month gets past it),
 but the reason the events section is split into distance bands at all rather
 than one 500-mile query (see ``events_for_bands``).
 
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import math
 import time
-from datetime import date, datetime, time as time_, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 
@@ -60,31 +60,49 @@ def _haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> floa
 
 
 def _normalize(raw: dict) -> dict:
+    """A listing, in the fields ``db.listings`` stores and the digest's JSON
+    uses, plus ``starts_at`` (UTC, for sorting) and ``lat``/``lon``."""
     embedded = raw.get("_embedded") or {}
     venues = embedded.get("venues") or [{}]
     venue = venues[0] if venues else {}
     location = venue.get("location") or {}
     attractions = embedded.get("attractions") or []
     start = ((raw.get("dates") or {}).get("start") or {})
-    onsale = (((raw.get("sales") or {}).get("public") or {})).get("startDateTime", "")
+    sales = raw.get("sales") or {}
 
     lat = location.get("latitude")
     lon = location.get("longitude")
     return {
         "id": raw.get("id"),
-        "name": raw.get("name"),
-        "url": raw.get("url"),
+        "name": raw.get("name") or "",
+        # Every billed act, headliner first - an on-sale for a show an artist
+        # you follow is opening is still worth hearing about.
+        "acts": [a["name"] for a in attractions if a.get("name")],
+        "local_date": start.get("localDate", ""),
+        "local_time": (start.get("localTime") or "")[:5],
         "starts_at": start.get("dateTime") or start.get("localDate", ""),
-        "onsale_start": onsale,
-        "venue_name": venue.get("name"),
+        "venue": venue.get("name"),
         "city": (venue.get("city") or {}).get("name"),
+        "url": raw.get("url"),
+        "onsale_at": (sales.get("public") or {}).get("startDateTime", ""),
+        "presales": [{"name": p.get("name") or "Presale", "starts_at": p.get("startDateTime", "")}
+                     for p in sales.get("presales") or [] if p.get("startDateTime")],
         "lat": float(lat) if lat is not None else None,
         "lon": float(lon) if lon is not None else None,
-        "attraction": attractions[0].get("name") if attractions else None,
-        # Every billed act, not just the headliner - a presale for a show an
-        # artist you follow is opening is still worth hearing about.
-        "attractions": [a["name"] for a in attractions if a.get("name")],
     }
+
+
+def _get(params: dict, page: int) -> dict | None:
+    """One page; None for "no results" (the API's 404, not an empty 200)."""
+    _throttle()
+    resp = httpx.get(f"{BASE}/events.json", params={**params, "page": page}, timeout=15)
+    if resp.status_code in (401, 403):
+        raise TicketmasterError(f"Ticketmaster refused the request ({resp.status_code}). Check TICKETMASTER_API_KEY.")
+    if resp.status_code == 404:
+        return None
+    if resp.status_code >= 400:
+        raise TicketmasterError(f"Ticketmaster request failed: {resp.status_code} {resp.text[:200]}")
+    return resp.json()
 
 
 def search_events(
@@ -93,11 +111,20 @@ def search_events(
     radius_miles: float,
     start: datetime | None = None,
     end: datetime | None = None,
-    onsale_start: datetime | None = None,
-    onsale_end: datetime | None = None,
+    onsale_on: date | None = None,
+    classification: str = "",
 ) -> list[dict]:
-    """One band's or one presale window's worth of events, fully paginated
-    up to the API's deep-paging cap. Returns normalized event dicts."""
+    """Every event matching, as normalized dicts.
+
+    The API stops at ``MAX_DEEP_PAGE`` results, and 500 miles holds about that
+    many events a day: a month-long query used to return only its first day.
+    So a date window with more than that is split in half until each half
+    fits. ``classification`` is ``classificationName`` (e.g. "music").
+
+    ``onsale_on`` is ``onsaleOnStartDate``, a public on-sale opening that day.
+    (``onsaleStartDateTime``, used until 2026-10, is silently ignored by the
+    API: the "presale today" ping was really the soonest events in range,
+    which is why the same show came back every morning.)"""
     settings.require("ticketmaster_api_key")
     params: dict[str, str] = {
         "apikey": settings.ticketmaster_api_key or "",
@@ -111,44 +138,37 @@ def search_events(
         params["startDateTime"] = _iso(start)
     if end:
         params["endDateTime"] = _iso(end)
-    if onsale_start:
-        params["onsaleStartDateTime"] = _iso(onsale_start)
-    if onsale_end:
-        params["onsaleEndDateTime"] = _iso(onsale_end)
+    if onsale_on:
+        params["onsaleOnStartDate"] = onsale_on.isoformat()
+    if classification:
+        params["classificationName"] = classification
 
-    events: list[dict] = []
-    page = 0
-    while page * PAGE_SIZE < MAX_DEEP_PAGE:
-        _throttle()
-        resp = httpx.get(f"{BASE}/events.json", params={**params, "page": page}, timeout=15)
-        if resp.status_code in (401, 403):
-            raise TicketmasterError(
-                f"Ticketmaster refused the request ({resp.status_code}). Check TICKETMASTER_API_KEY."
-            )
-        if resp.status_code == 404:
-            # The API returns 404 for "no results", not an empty 200 - not an error.
+    data = _get(params, 0)
+    if data is None:
+        return []
+    info = data.get("page") or {}
+    if info.get("totalElements", 0) > MAX_DEEP_PAGE and start and end and end - start > timedelta(hours=12):
+        mid = start + (end - start) / 2
+        kw = {"radius_miles": radius_miles, "onsale_on": onsale_on, "classification": classification}
+        return search_events(settings, start=start, end=mid, **kw) + search_events(settings, start=mid, end=end, **kw)
+
+    events = [_normalize(e) for e in (data.get("_embedded") or {}).get("events", [])]
+    total_pages = info.get("totalPages", 1)
+    page = 1
+    while page < total_pages and page * PAGE_SIZE < MAX_DEEP_PAGE:
+        data = _get(params, page)
+        if data is None:
             break
-        if resp.status_code >= 400:
-            raise TicketmasterError(f"Ticketmaster request failed: {resp.status_code} {resp.text[:200]}")
-
-        data = resp.json()
-        raw_events = (data.get("_embedded") or {}).get("events", [])
-        events.extend(_normalize(e) for e in raw_events)
-
-        total_pages = (data.get("page") or {}).get("totalPages", 1)
+        events.extend(_normalize(e) for e in (data.get("_embedded") or {}).get("events", []))
         page += 1
-        if page >= total_pages:
-            break
-
     return events
 
 
-# A farther band's 1000-result deep-paging cap is still a lot of events to
-# hand a model every run - a downtown metro over 60 days can fill it. Capped
-# per band, keeping the soonest (the API already returns sort=date,asc and
-# nothing here reorders), rather than trusting the model to silently ignore
-# most of a multi-megabyte prompt.
-MAX_EVENTS_PER_BAND = 60
+def _distance(settings: Settings, event: dict) -> float | None:
+    if event["lat"] is None or event["lon"] is None:
+        return None
+    home = settings.prefs["home"]
+    return _haversine_miles(home["latitude"], home["longitude"], event["lat"], event["lon"])
 
 
 def events_for_bands(settings: Settings, window_days: int) -> dict[str, list[dict]]:
@@ -159,9 +179,10 @@ def events_for_bands(settings: Settings, window_days: int) -> dict[str, list[dic
     are also returned by a farther band's query - that's expected, not a bug)
     and then kept only if the computed distance actually falls in
     ``[min_miles, max_miles)``. An event id is only ever placed in one band's
-    list, and each band's list is capped at ``MAX_EVENTS_PER_BAND``.
+    list. A band's optional ``classification`` narrows its query (the weekend
+    band asks for music only). Not capped: the digest caps what it offers the
+    model, after dropping what it offered before.
     """
-    home = settings.prefs["home"]
     bands = sorted(settings.prefs["events"]["bands"], key=lambda b: b["max_miles"])
     now = datetime.now(timezone.utc)
     end = now + timedelta(days=window_days)
@@ -170,11 +191,12 @@ def events_for_bands(settings: Settings, window_days: int) -> dict[str, list[dic
     result: dict[str, list[dict]] = {band["name"]: [] for band in bands}
 
     for band in bands:
-        raw = search_events(settings, radius_miles=band["max_miles"], start=now, end=end)
+        raw = search_events(settings, radius_miles=band["max_miles"], start=now, end=end,
+                            classification=band.get("classification", ""))
         for event in raw:
-            if event["id"] in seen_ids or event["lat"] is None or event["lon"] is None:
+            distance = _distance(settings, event)
+            if event["id"] in seen_ids or distance is None:
                 continue
-            distance = _haversine_miles(home["latitude"], home["longitude"], event["lat"], event["lon"])
             if not (band["min_miles"] <= distance < band["max_miles"]):
                 continue
             seen_ids.add(event["id"])
@@ -183,34 +205,29 @@ def events_for_bands(settings: Settings, window_days: int) -> dict[str, list[dic
             event["bar"] = band["bar"]
             result[band["name"]].append(event)
 
-    return {name: events[:MAX_EVENTS_PER_BAND] for name, events in result.items()}
+    return {name: sorted(events, key=lambda e: e["starts_at"]) for name, events in result.items()}
 
 
-def presales_starting(settings: Settings, on_date: date) -> list[dict]:
-    """Events anywhere in range whose public onsale opens on ``on_date``.
-
-    A Sunday digest is useless for tickets that sold out Thursday - this is
-    meant to run daily, checked well before ticket windows tend to open.
-    """
-    bands = settings.prefs["events"]["bands"]
-    radius = max((b["max_miles"] for b in bands), default=500)
-    window_start = datetime.combine(on_date, time_.min, tzinfo=timezone.utc)
-    window_end = window_start + timedelta(days=1)
-    return search_events(settings, radius_miles=radius, onsale_start=window_start, onsale_end=window_end)
+def onsales_between(settings: Settings, first: date, days: int) -> list[dict]:
+    """Events within the farthest band whose public on-sale opens on any day
+    from ``first`` for ``days`` days. One query per day: ``onsaleOnStartDate``
+    takes a single date, and a range query would hit the deep-paging cap."""
+    radius = max((b["max_miles"] for b in settings.prefs["events"]["bands"]), default=500)
+    found: dict[str, dict] = {}
+    for offset in range(days):
+        for event in search_events(settings, radius_miles=radius, onsale_on=first + timedelta(days=offset)):
+            distance = _distance(settings, event)
+            if event["id"] not in found and distance is not None and distance < radius:
+                event["distance_miles"] = round(distance, 1)
+                found[event["id"]] = event
+    return sorted(found.values(), key=lambda e: e["onsale_at"])
 
 
 def item_id(event: dict, kind: str = "event") -> str:
     """Mute scheme: ``<kind>:artist/<name>/<id>``, so muting ``event:artist/Tool``
-    silences every Tool show. ``kind`` is "event" for the digest line and
-    "presale" for the presale ping - separate namespaces on purpose, so muting
-    one ask never silently mutes the other."""
-    if event.get("attraction"):
-        return f"{kind}:artist/{event['attraction']}/{event['id']}"
+    silences every Tool show. ``kind`` is "event" for the events section and
+    "presale" for on-sale soon - separate namespaces on purpose, so muting one
+    ask never silently mutes the other."""
+    if event.get("acts"):
+        return f"{kind}:artist/{event['acts'][0]}/{event['id']}"
     return f"{kind}:id/{event['id']}"
-
-
-def format_event(event: dict) -> str:
-    when = (event.get("starts_at") or "")[:10]
-    where = ", ".join(p for p in (event.get("venue_name"), event.get("city")) if p)
-    distance = f"  ({event['distance_miles']} mi)" if event.get("distance_miles") is not None else ""
-    return f"{when}  {event.get('name')}  @ {where}{distance}  {event.get('url', '')}"

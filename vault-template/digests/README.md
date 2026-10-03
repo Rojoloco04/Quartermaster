@@ -1,3 +1,3 @@
 # Digests
 
-Archive of every weekly digest sent.
+Archive of every digest sent, as markdown and as JSON.

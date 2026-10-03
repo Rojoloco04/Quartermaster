@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import secrets
 import shutil
@@ -25,11 +26,14 @@ import socket
 import struct
 import subprocess
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import httpx
 
 from ..config import Settings
+
+log = logging.getLogger(__name__)
 
 PAPER_API = "https://fill.papermc.io/v3/projects/paper"
 USER_AGENT = "quartermaster (self-hosted personal server manager)"
@@ -342,6 +346,43 @@ def stop(settings: Settings) -> str:
         return f"Asked it to stop; it's still saving after {STOP_WAIT_SECONDS}s. Check again shortly."
     (server_dir(settings) / PID_FILE).unlink(missing_ok=True)
     return "Stopped; the world is saved."
+
+
+# --- Backup (game_backup) ------------------------------------------------------
+
+# The world folders, and the small files that say who may join and as what.
+_BACKUP_FILES = ("server.properties", "ops.json", "whitelist.json", "banned-players.json",
+                 "banned-ips.json", STATE_FILE)
+
+
+def backup_sources(settings: Settings) -> list[tuple[Path, str]]:
+    """(folder, path inside it) pairs worth keeping. Nothing before setup."""
+    folder = server_dir(settings)
+    if not (folder / STATE_FILE).exists():
+        return []
+    world = read_properties(folder / "server.properties").get("level-name") or "world"
+    # Paper keeps the nether and the end beside the world, where they exist.
+    return [(folder, name) for name in (world, f"{world}_nether", f"{world}_the_end", *_BACKUP_FILES)]
+
+
+@contextmanager
+def backup_hold(settings: Settings):
+    """While a backup copies the world: everything flushed to disk and autosave
+    off, so no region file is half-written mid-copy. Nothing to do when the
+    server is down; a server that can't be reached fails the backup rather
+    than risk a torn copy."""
+    if not is_running(settings):
+        yield
+        return
+    rcon(settings, "save-off")
+    try:
+        rcon(settings, "save-all flush", timeout=60)
+        yield
+    finally:
+        try:
+            rcon(settings, "save-on")
+        except MinecraftError:
+            log.exception("couldn't turn autosave back on after a backup")
 
 
 def online_players(list_output: str) -> list[str]:

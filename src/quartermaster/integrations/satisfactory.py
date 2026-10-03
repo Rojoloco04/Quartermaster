@@ -296,6 +296,23 @@ def stop(settings: Settings) -> str:
     return f"Stopped; saved as {saved}." if saved else "Stopped (no save was loaded)."
 
 
+# --- Backup (game_backup) ------------------------------------------------------
+
+
+def backup_sources(settings: Settings) -> list[tuple[Path, str]]:
+    """(folder, path inside it) pairs worth keeping: the server's saves and
+    blueprints, its settings file (claim, admin password, server name), and
+    our login state. The owner's client saves (a Steam-id folder) aren't ours.
+    No hold while it runs: a nightly save would add a save file every night,
+    and the copies kept cover a torn autosave."""
+    root = save_root()
+    if not (root / "server").is_dir():
+        return []
+    settings_files = sorted(p.name for p in root.glob("ServerSettings.*.sav"))
+    return [(root, "server"), (root, "blueprints"), *((root, n) for n in settings_files),
+            (server_dir(settings), STATE_FILE)]
+
+
 # --- Importing a save ----------------------------------------------------------
 
 

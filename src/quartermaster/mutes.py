@@ -28,7 +28,7 @@ Things I've been told to stop raising. **Delete a line to un-mute it.**
 Reminding is the default — only what's listed here is silenced. Each entry is
 `kind:key`. A mute also covers anything nested beneath it, so `event:artist/Tool`
 silences every Tool event, not just one show. Leave the kind off (`artist/Tool`)
-to silence everything about Tool: digest lines and presale pings alike.
+to silence everything about Tool: events and on-sales alike.
 
 """
 
@@ -65,7 +65,7 @@ def is_muted(item_id: str, mutes: list[Mute]) -> bool:
     Scope nesting uses '/' so a broad mute can cover a family of items:
     muting ``event:artist/Tool`` also silences ``event:artist/Tool/2026-11-02``.
     A mute with no ``kind:`` prefix covers every kind: ``artist/Tool`` silences
-    both the digest's events line and the presale ping. Case-insensitive, since
+    both the digest's events and its on-sales. Case-insensitive, since
     a mute is typed by a person and Ticketmaster's casing isn't predictable.
     """
     item = item_id.lower()

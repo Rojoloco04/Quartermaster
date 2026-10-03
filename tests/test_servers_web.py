@@ -18,7 +18,8 @@ def settings(tmp_path: Path, monkeypatch) -> Settings:
     (tmp_path / "mc").mkdir()
     return Settings(vault=tmp_path / "Vault",
                     prefs={**DEFAULTS, "minecraft": {"dir": str(tmp_path / "mc"), "memory_gb": 4},
-                           "satisfactory": {"dir": str(tmp_path / "sf")}})
+                           "satisfactory": {"dir": str(tmp_path / "sf")},
+                           "backups": {"dir": str(tmp_path / "backups"), "keep": 14}})
 
 
 @pytest.fixture
@@ -37,6 +38,13 @@ def test_every_game_gets_a_tab_and_the_nav_links_it(client):
     for game in game_servers.GAMES.values():
         assert f"href='/servers/{game.key}'" in html
     assert 'href="/servers"' in client.get("/").text
+
+
+def test_each_tab_says_when_it_was_last_backed_up(client, tmp_path):
+    assert "No backup yet" in client.get("/servers/minecraft").text
+    (tmp_path / "backups" / "minecraft").mkdir(parents=True)
+    (tmp_path / "backups" / "minecraft" / "2026-10-04_050000.zip").write_bytes(b"")
+    assert "Last backup 2026-10-04 05:00, 1 kept" in client.get("/servers/minecraft").text
 
 
 def test_unknown_game_is_404(client):

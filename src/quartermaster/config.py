@@ -39,12 +39,15 @@ DEFAULTS: dict = {
         "bands": [
             {"name": "local", "min_miles": 0, "max_miles": 60, "bar": "low"},
             {"name": "day_trip", "min_miles": 60, "max_miles": 250, "bar": "medium"},
-            {"name": "weekend", "min_miles": 250, "max_miles": 500, "bar": "high"},
+            # Music only: 500 miles holds ~8,500 events a month, mostly not worth a trip.
+            {"name": "weekend", "min_miles": 250, "max_miles": 500, "bar": "high", "classification": "music"},
         ],
         # How far ahead to look for events worth travelling to. Longer than
         # the calendar window on purpose - a show worth planning a trip
         # around is usually booked weeks out, not found seven days ahead.
-        "window_days": 60,
+        "window_days": 30,
+        # How far ahead to look for public on-sales of acts you like.
+        "onsale_days": 30,
     },
     "notion": {
         # A page must be untouched this long AND look unfinished to be called stale.
@@ -67,9 +70,14 @@ DEFAULTS: dict = {
         "fresh_after_minutes": 5,
     },
     "digest": {
+        # The day a weekly digest goes out, and the day a daily one lists the
+        # wishlist links it couldn't read (they rarely change).
         "weekday": "sunday",
-        "hour": 18,
+        "hour": 8,
         "calendar_days_ahead": 7,
+        # All-day calendar entries whose title contains any of these
+        # (case-insensitive) are left out: reminders, not plans.
+        "ignore_calendar": [],
     },
     "public": {
         # Replies per person per rolling hour when people in the server just
@@ -89,6 +97,13 @@ DEFAULTS: dict = {
         # Where SteamCMD and the server install live. Blank: the per-user data
         # dir. Saves stay in %LOCALAPPDATA%\FactoryGame (the game decides).
         "dir": "",
+    },
+    "backups": {
+        # Nightly zips of the game servers' worlds and saves (qm backup). The
+        # live installs stay on the SSD; this is the HDD.
+        "dir": "F:\\Backups\\servers",
+        # Zips kept per game; a night where nothing changed writes none.
+        "keep": 14,
     },
 }
 
