@@ -59,7 +59,9 @@ From a terminal: `qm mute artist/Tool --reason "not my thing"`.
 
 ## The digest
 
-One DM every morning at 08:00, in the same layout every day:
+One DM every morning at 08:00, in the same layout every day. It's put together
+at 03:15 with the other night jobs (so it never eats into your daytime Claude
+usage) and the bot sends it at 08:00, so the calendar is as of 03:15:
 
 - **📅 Calendar**: the next 7 days. All-day entries whose title contains a word
   in `digest.ignore_calendar` (reminders, anniversaries) are left out.
@@ -81,6 +83,14 @@ in the vault's `digests/` as markdown and as JSON.
   hand outranks anything inferred. Preferences (home, distance bands, the 30
   days, digest hour) are in `System/config.toml`.
 - Preview without sending: `qm digest --dry-run`.
+- See it in Discord without using it up: `qm digest --test` DMs you the real
+  digest with a "test run" line on top, and marks nothing as shown, so the
+  next real one still has everything. Neither a test nor a dry run changes
+  what later digests show.
+- `qm digest --reset` makes the digest forget what it has already offered and
+  shown (events, on-sales, price drops, stale pages), so the next run looks like
+  the first one. Mutes stay. Add `--test` to reset and send a test in one go.
+  The next real digest will repeat what earlier ones sent.
 - `qm schedule install --digest-cadence weekly` makes it Sundays only.
 
 ## Moderation (in a server)
@@ -95,7 +105,10 @@ targets exactly that message.
 Anything that isn't a request for an action ("what's the best seed?", banter)
 just gets a reply. That side of the bot knows nothing about you and can't do
 anything, and each person gets `public.replies_per_hour` replies an hour
-(default 20), since it runs on your subscription.
+(default 20), since it runs on your subscription. It reads the channel's last
+`public.context_messages` messages (default 25, about 5000 characters at most) before
+replying, so "is he spitting fire?" works without explaining who "he" is. Set it
+to 0 to turn that off.
 
 ## Minecraft
 
@@ -162,7 +175,7 @@ There's no console from chat. Guild channels can't control it yet.
 
 `qm backup` zips each server's world or saves onto the backup drive, one zip
 per game: `F:\Backups\servers\<game>\<date>_<time>.zip` (`backups.dir`). It
-runs daily at 05:00 on its own. A night where nothing changed writes nothing,
+runs daily at 03:35 on its own. A night where nothing changed writes nothing,
 and only the newest 14 zips per game are kept (`backups.keep`). Each tab on
 the Servers page says when its last backup was.
 
@@ -181,7 +194,8 @@ the Servers page says when its last backup was.
 
 - `qm web` opens a dashboard at http://127.0.0.1:8766: whether the bot is up,
   scheduled jobs, recent turns with cost, the live conversation, a live log,
-  digests and mutes.
+  digests and mutes. It's usually already running (it starts at logon); then
+  `qm web` just prints its link.
 - **Settings** (http://127.0.0.1:8766/settings) shows everything Quartermaster
   runs on and lets you change it in place: the preferences in force, what it knows (`facts/`, including lessons), the agent's
   instructions, mutes and the dev queue. Secrets show only as set or not set.
@@ -208,30 +222,41 @@ the Servers page says when its last backup was.
 
 ## Running it
 
-- The bot and dashboard start on their own when you log in, with no window,
-  and come back if either crashes (the `Quartermaster Service` task runs
-  `qm serve`, which watches both). Only one bot can run at a time: a second
-  `qm bot` says one is already running and exits.
-- `qm restart` restarts the bot and dashboard, e.g. after a code change. A job
-  mid-run is left alone. Their console output goes to `bot.out` / `web.out`
-  next to the log; the log says when the supervisor restarted one and why.
+- `qm help` lists every command with a line on what it does and its options;
+  `qm help digest` shows one in full.
+- The bot and dashboard always run under `qm serve`, a small supervisor that
+  starts both and brings either back if it crashes. The `Quartermaster
+  Service` task starts it when you log in, with no window. Only one bot can run
+  at a time: a second `qm bot` says one is already running and exits (`qm bot`
+  by hand is for watching it in a terminal while debugging).
+- `qm restart` restarts serve with the bot and dashboard, e.g. after a code
+  change, and shows them as one tree: `serve (pid 5) with bot (pid 10), web
+  (pid 20)`. A job mid-run is left alone. Console output goes to `bot.out` /
+  `web.out` next to the log; the log says when the supervisor restarted one
+  and why.
 - `qm quit` (or `qm stop`) stops everything: the bot, the dashboard, the
   supervisor and any job mid-run. They stay stopped until `qm restart` or your
   next logon.
 - `qm schedule install --digest-cadence daily` (or `weekly`) registers the
-  service (at logon), the Notion sync (07:00), knowledge reconcile (07:30), digest (08:00),
-  vault push (23:00) and game server backup (05:00). `qm schedule status` shows them. They run with no
-  window; their output is in the log (and on the dashboard).
+  service (at logon) and the night chores, five minutes apart so each finishes
+  before the next: Notion sync (03:00), knowledge reconcile (03:05), Claude page
+  tidy (Sundays 03:10), digest (03:15), vault push (03:30) and game server
+  backup (03:35). The ones that use Claude are done hours before your day
+  starts, so they don't count against your daytime usage. Nothing messages you
+  at night: the digest, reconcile's questions and tidy's Confirm are held and
+  the bot sends them at 08:00 (`digest.hour`). `qm schedule status` shows them.
+  They run with no window; their output is in the log (and on the dashboard).
 - `qm push` commits everything in the vault and pushes it to its private
-  remote; that remote is the vault's backup. It runs daily at 23:00 on its own.
+  remote; that remote is the vault's backup. It runs daily at 03:30 on its own.
   It never forces: if the push is rejected or a merge is half-done, it fails
   (see the log) and leaves it for you.
 - `qm reconcile` checks what Quartermaster knows against itself and Notion:
   it merges duplicates, drops plans whose date has passed, and DMs you a
   question wherever two sources disagree (also listed on the Settings page).
-  `--dry-run` shows what it would do. It runs daily at 07:30 on its own, or
+  `--dry-run` shows what it would do. It runs daily at 03:05 on its own (its
+  questions arrive at 08:00), or
   ask the bot ("reconcile what you know") and it answers in the conversation.
-- Changed something in Notion and don't want to wait for the 07:00 sync? Ask
+- Changed something in Notion and don't want to wait for the 03:00 sync? Ask
   the bot to sync ("sync my notion"), or run `qm sync`. Pages you delete in
   Notion leave the mirror and the brain on the next sync. If a sync would remove
   more than half the mirror at once, it removes nothing and says so (usually a

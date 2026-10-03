@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 
 from quartermaster.config import Settings
-from quartermaster.ops.schedule import DIGEST_TASK, RETIRED_TASKS, SYNC_HOUR, SYNC_TASK, TASKS, build_tasks
+from quartermaster.ops import schedule
+from quartermaster.ops.schedule import DIGEST_TASK, RETIRED_TASKS, SYNC_TASK, TASKS, build_tasks
 
 
 @pytest.fixture
@@ -26,15 +27,16 @@ class TestBuildTasks:
         with pytest.raises(ValueError, match="daily.*weekly"):
             build_tasks(settings, "monthly")
 
-    def test_weekly_cadence_fires_on_the_configured_weekday_and_hour(self, settings):
+    def test_weekly_cadence_builds_on_the_configured_weekday_at_night(self, settings):
+        # Built with the chores; the bot delivers it at digest.hour.
         tasks = build_tasks(settings, "weekly")
         digest = next(t for t in tasks if t.name == DIGEST_TASK)
-        assert digest.schedule_args == ["/sc", "weekly", "/d", "SUN", "/st", "18:00"]
+        assert digest.schedule_args == ["/sc", "weekly", "/d", "SUN", "/st", "03:15"]
 
     def test_daily_cadence_drops_the_weekday(self, settings):
         tasks = build_tasks(settings, "daily")
         digest = next(t for t in tasks if t.name == DIGEST_TASK)
-        assert digest.schedule_args == ["/sc", "daily", "/st", "18:00"]
+        assert digest.schedule_args == ["/sc", "daily", "/st", "03:15"]
         assert "/d" not in digest.schedule_args
 
     def test_presales_are_in_the_digest_not_a_task_of_their_own(self, settings):
@@ -54,8 +56,16 @@ class TestBuildTasks:
         # The stale-page scan reads the mirror; it must not be days old.
         sync = next(t for t in build_tasks(settings, "weekly") if t.name == SYNC_TASK)
         assert sync.command[-1] == "sync"
-        assert sync.schedule_args == ["/sc", "daily", "/st", f"{SYNC_HOUR:02d}:00"]
-        assert SYNC_HOUR < 8  # the digest's default hour
+        assert sync.schedule_args == ["/sc", "daily", "/st", "03:00"]
+
+    def test_chores_run_in_order_five_minutes_or_more_apart_within_three_am(self, settings):
+        # Model-using jobs spend a 5-hour window that must close before the
+        # owner's day; each must finish before the next reads its output.
+        times = [schedule.SYNC_TIME, schedule.RECONCILE_TIME, schedule.TIDY_TIME,
+                 schedule.DIGEST_TIME, schedule.PUSH_TIME, schedule.BACKUP_TIME]
+        minutes = [int(t[:2]) * 60 + int(t[3:]) for t in times]
+        assert all(b - a >= 5 for a, b in zip(minutes, minutes[1:]))
+        assert minutes[0] == 180 and minutes[-1] < 240
 
 
 def test_service_task_runs_windowless_forever_and_once():

@@ -344,18 +344,28 @@ def record(conn: sqlite3.Connection, marks: dict) -> None:
         log.info("state.db pruned: %s", removed)
 
 
-def run_digest(settings: Settings, *, dry_run: bool = False) -> str:
-    from ..discord_bot.send import send_dm
+TEST_NOTE = "-# Test run: nothing here is marked as shown or archived."
+
+
+def run_digest(settings: Settings, *, dry_run: bool = False, test: bool = False) -> str:
+    """Build, archive and send the digest. The scheduled run builds at 03:15,
+    so it's held and the bot delivers it at ``digest.hour`` (``send_or_hold``);
+    what it shows is marked now, since a held message is kept until sent.
+    ``dry_run`` sends nothing; ``test`` DMs it at once with a note on top.
+    Neither archives it or marks anything shown."""
+    from ..discord_bot.send import send_dm, send_or_hold
 
     with db.session(settings.db_path) as conn:
         digest, marks = build(settings, conn)
         text = render(digest)
-        if dry_run or not text:
+        if test and text:
+            send_dm(settings, f"{TEST_NOTE}\n{text}")
+        if dry_run or test or not text:
             return text
         settings.digests_dir.mkdir(parents=True, exist_ok=True)
         stem = settings.digests_dir / digest["date"]
         stem.with_suffix(".md").write_text(text + "\n", encoding="utf-8")
         stem.with_suffix(".json").write_text(json.dumps(digest, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
-        send_dm(settings, text)
+        send_or_hold(settings, text, "digest")
         record(conn, marks)
     return text

@@ -244,9 +244,11 @@ async def reconcile(settings: Settings, *, dry_run: bool = False, notify: bool =
     if not message:
         return "Everything is consistent; nothing sent." if notify else "Everything is consistent."
     if notify:
-        from ..discord_bot.send import send_dm
+        from ..discord_bot.send import send_or_hold
 
         # send_dm runs its own event loop; called straight from this coroutine it
         # raised "asyncio.run() cannot be called from a running event loop".
-        await asyncio.to_thread(send_dm, settings, message)
+        # The daily run is at 03:05: held, the bot delivers it after the digest.
+        if await asyncio.to_thread(send_or_hold, settings, message, "reconcile"):
+            message += "\n\n(Held: the bot sends this at the digest hour.)"
     return message

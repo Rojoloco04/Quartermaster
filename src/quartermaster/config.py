@@ -83,6 +83,10 @@ DEFAULTS: dict = {
         # Replies per person per rolling hour when people in the server just
         # talk to the bot. Their chat spends the owner's subscription.
         "replies_per_hour": 20,
+        # How many of the channel's recent messages the bot reads before
+        # replying, so it can follow the conversation (also capped at ~5000
+        # characters). 0 = none.
+        "context_messages": 25,
     },
     "minecraft": {
         # Heap for the Paper server. The owner plays on the same machine, so

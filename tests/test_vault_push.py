@@ -107,4 +107,4 @@ def test_scheduled_daily_last_thing(tmp_path):
         prefs={"digest": {"weekday": "sunday", "hour": 18}},
     )
     task = next(t for t in build_tasks(settings, "daily") if t.name == PUSH_TASK)
-    assert task.command[-1] == "push" and task.schedule_args == ["/sc", "daily", "/st", "23:00"]
+    assert task.command[-1] == "push" and task.schedule_args == ["/sc", "daily", "/st", "03:30"]

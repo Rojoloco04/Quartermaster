@@ -3,6 +3,7 @@ profile, capped per person, and never through the owner's lock or profile."""
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -35,8 +36,19 @@ def test_quota_caps_per_person_per_rolling_hour():
 
 
 class FakeChannel:
-    def __init__(self):
+    def __init__(self, history=()):
         self.sent = []
+        self._history = list(history)  # newest first, as Discord returns it
+        self.history_calls = []
+
+    def history(self, **kwargs):
+        self.history_calls.append(kwargs)
+        found = self._history[: kwargs["limit"]]
+
+        async def gen():
+            for m in found:
+                yield m
+        return gen()
 
     async def send(self, text, **_):
         self.sent.append(text)
@@ -53,8 +65,22 @@ class FakeAuthor:
 
 
 class FakeMessage:
-    def __init__(self):
-        self.channel, self.author = FakeChannel(), FakeAuthor()
+    def __init__(self, history=()):
+        self.channel, self.author = FakeChannel(history), FakeAuthor()
+        self.created_at = datetime(2026, 9, 30, 23, 4, tzinfo=timezone.utc)
+
+
+class Person:
+    def __init__(self, id, display_name):
+        self.id, self.display_name = id, display_name
+
+
+class Said:
+    """A message in the channel's history."""
+
+    def __init__(self, author, content, reference=None, attachments=(), embeds=()):
+        self.author, self.clean_content = author, content
+        self.reference, self.attachments, self.embeds = reference, list(attachments), list(embeds)
 
 
 @pytest.fixture
@@ -77,6 +103,62 @@ def test_chat_is_answered_by_the_public_profile_with_the_sender_named(bot, monke
     assert seen == [("Dave: rate my build", "public")]
     assert msg.channel.sent == ["They're fine, I guess."]
     assert not bot._busy.locked()
+
+
+def test_the_channels_recent_messages_come_first_oldest_first(bot, monkeypatch):
+    phlabry, me = Person(7, "Phlabry"), Person(99, "QM")
+    monkeypatch.setattr(discord_bot.Quartermaster, "user", me, raising=False)
+    seen = []
+
+    async def fake_ask(prompt, profile, cli, **_):
+        seen.append(prompt)
+        return agent.Reply(text="fire, honestly")
+
+    monkeypatch.setattr(agent, "ask", fake_ask)
+    msg = FakeMessage(history=[  # newest first
+        Said(me, "need more context - who's \"he\"?"),
+        Said(phlabry, "and my knot thick"),
+        Said(phlabry, "yeah my glock sick"),
+    ])
+    asyncio.run(bot.answer_publicly(msg, "phlabry with his bars"))
+    prompt = seen[0]
+    assert prompt.index("Phlabry: yeah my glock sick") < prompt.index("Phlabry: and my knot thick")
+    assert "Quartermaster (you): need more context" in prompt
+    assert prompt.rstrip().endswith("Dave: phlabry with his bars")
+    assert msg.channel.history_calls == [{"limit": 25, "before": msg}]  # no time window
+
+
+def test_context_trims_long_lines_and_drops_the_oldest_past_the_cap():
+    someone = Person(7, "Sam")
+    newest_first = [Said(someone, f"line {i} " + "x" * 1000) for i in range(30)]
+    msg = FakeMessage(history=newest_first)
+    text = asyncio.run(discord_bot.channel_context(msg, None, 30))
+    lines = text.splitlines()
+    assert all(len(line) <= discord_bot.CONTEXT_LINE_CHARS + 20 for line in lines)
+    assert len(text) <= discord_bot.CONTEXT_TOTAL_CHARS
+    assert lines[-1].startswith("Sam: line 0 ")  # the newest survives
+
+
+def test_context_labels_replies_and_bare_attachments():
+    sam, dave = Person(7, "Sam"), Person(8, "Dave")
+    ref = type("Ref", (), {})()
+    ref.resolved = discord_bot.discord.Message.__new__(discord_bot.discord.Message)
+    ref.resolved.author = dave  # type: ignore[misc]
+    msg = FakeMessage(history=[Said(sam, "", attachments=["pic.png"]), Said(sam, "lol", reference=ref)])
+    text = asyncio.run(discord_bot.channel_context(msg, None, 10))
+    assert text.splitlines() == ["Sam (replying to Dave): lol", "Sam: [attachment]"]
+
+
+def test_context_off_or_unreadable_is_just_no_context():
+    assert asyncio.run(discord_bot.channel_context(FakeMessage(), None, 0)) == ""
+
+    class Forbidden(FakeChannel):
+        def history(self, **_):
+            raise discord_bot.discord.Forbidden(type("R", (), {"status": 403, "reason": "no"})(), "Missing Access")
+
+    msg = FakeMessage()
+    msg.channel = Forbidden()
+    assert asyncio.run(discord_bot.channel_context(msg, None, 20)) == ""
 
 
 def test_over_the_cap_it_says_so_instead_of_calling_the_model(bot, monkeypatch):

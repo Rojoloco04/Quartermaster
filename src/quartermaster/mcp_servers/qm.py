@@ -69,7 +69,7 @@ def record_lesson(lesson: str) -> str:
 @server.tool()
 def sync_notion() -> str:
     """Pull Notion into the vault's notion/ mirror now, instead of waiting for
-    the 07:00 daily sync: new and edited pages are fetched, and pages deleted
+    the 03:00 daily sync: new and edited pages are fetched, and pages deleted
     or unshared in Notion are removed from the mirror (and so from the brain).
     Use it whenever the owner asks to sync, or says the mirror looks out of
     date. Takes seconds when little has changed. Reports what changed."""
@@ -89,7 +89,7 @@ def _sync(s) -> str:
 @server.tool()
 async def reconcile_knowledge() -> str:
     """Check what you know against itself and Notion now, instead of waiting
-    for the 07:30 daily run: merges duplicate facts, drops plans whose date has
+    for the 03:05 daily run: merges duplicate facts, drops plans whose date has
     passed (with backups), and returns every place two sources disagree as a
     question. Those are also saved to System/conflicts.md. Use it whenever
     the owner asks to reconcile, check or tidy what you know. Takes a minute.

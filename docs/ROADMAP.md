@@ -31,7 +31,7 @@ Still open from Phase 4:
   the shared session and needs its own Linux login (revisit for a sandbox or a
   move to a server).
 - ~~**Scheduled push**~~ of the vault to its private remote — done 2026-09-22:
-  `qm push`, daily at 23:00; commits everything, never forces.
+  `qm push`, daily (03:30 since 2026-10-03, was 23:00); commits everything, never forces.
 - ~~**restic** nightly to a second drive~~ — dropped 2026-09-22: the vault's git
   remote already keeps every version off this machine. What isn't in it is
   rebuildable (`state.db`) or re-creatable (`.env`, OAuth tokens: `qm auth`).
@@ -132,7 +132,7 @@ Streaming with NVENC hardware transcoding.
   the **Servers** tab), and **chat** for friends who mention the bot.
 - 2026-10-03: the **digest rebuilt** as JSON that code renders (fixed layout,
   bold acts, one line per show however many listings it's sold as); the model
-  only picks new events and says why. Daily at 08:00, a 30-day window that
+  only picks new events and says why. Built at 03:15, sent at 08:00, a 30-day window that
   actually reaches 30 days, **on-sales folded in** and shown once (the old
   presale ping's filter was ignored by Ticketmaster, so it repeated), `state.db`
   pruned. **Weather dropped**: the owner checks an app, and a text forecast
@@ -160,7 +160,7 @@ Streaming with NVENC hardware transcoding.
   starts/stops it and runs allow-listed commands over RCON. Satisfactory
   added 2026-09-22 (`qm satisfactory`, DM tools, a /servers tab; on this PC for
   now, a separate server box later). Nightly zips of both to the F: HDD added
-  2026-10-03 (`qm backup`, 05:00, skip if unchanged, keep 14): the vault push
+  2026-10-03 (`qm backup`, 03:35, skip if unchanged, keep 14): the vault push
   never covered them. Next, if wanted: Satisfactory from guild
   channels. It has no in-game whisper to prove a link with, so control would
   be owner-only or by a Discord role.

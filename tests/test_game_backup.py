@@ -179,4 +179,4 @@ def test_satisfactory_sources_are_the_servers_not_the_owners_client_saves(settin
 
 def test_scheduled_daily_early_morning(settings):
     task = next(t for t in build_tasks(settings, "daily") if t.name == BACKUP_TASK)
-    assert task.command[-1] == "backup" and task.schedule_args == ["/sc", "daily", "/st", "05:00"]
+    assert task.command[-1] == "backup" and task.schedule_args == ["/sc", "daily", "/st", "03:35"]

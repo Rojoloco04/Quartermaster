@@ -251,6 +251,21 @@ def mark_listings(conn: sqlite3.Connection, ids: list[str], what: str) -> None:
                  {"now": utcnow(), **{f"id{i}": v for i, v in enumerate(ids)}})
 
 
+def reset_digest_marks(conn: sqlite3.Connection) -> dict[str, int]:
+    """Forget what the digest has offered and shown, so the next run is like
+    the first: every listing's considered/shown marks and every surfaced row
+    (price drops, stale pages). Observations stay (listings, price history),
+    and mutes live in the vault, untouched. For testing; it also means the
+    next real digest repeats what earlier ones sent."""
+    listings = conn.execute(
+        """UPDATE listings SET considered_at = NULL, event_shown_at = NULL,
+               event_times_shown = 0, onsale_shown_at = NULL
+           WHERE considered_at IS NOT NULL OR event_shown_at IS NOT NULL OR onsale_shown_at IS NOT NULL"""
+    ).rowcount
+    surfaced = conn.execute("DELETE FROM surfaced").rowcount
+    return {"listings": listings, "surfaced": surfaced}
+
+
 # How long rows are kept. Nothing here is precious (see the module docstring);
 # this only stops the file growing forever.
 LISTING_DAYS_AFTER = 30      # after the show's date

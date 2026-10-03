@@ -30,6 +30,34 @@ def test_restart_targets_only_bot_and_web(monkeypatch):
     assert killed == [10, 20]
 
 
+def test_stopping_serve_names_the_children_that_go_with_it(monkeypatch):
+    rows = [
+        _p(5, 1, "pythonw.exe", r"C:\v\pythonw.exe -m quartermaster.cli serve"),
+        _p(6, 5, "python.exe", r"C:\v\python.exe -m quartermaster.cli serve"),
+        _p(10, 6, "qm.exe", r"C:\v\qm.exe bot"),
+        _p(11, 10, "python.exe", r"C:\v\python.exe C:\v\qm.exe bot"),
+        _p(20, 6, "qm.exe", r"C:\v\qm.exe web"),
+        _p(99, 1, "qm.exe", r"C:\v\qm.exe restart"),
+    ]
+    monkeypatch.setattr(procs, "list_processes", lambda: rows)
+    monkeypatch.setattr(procs.os, "getpid", lambda: 99)
+    monkeypatch.setattr(procs.subprocess, "run", lambda cmd, **kw: type("R", (), {"returncode": 0})())
+    assert procs.quit_all({"serve", "bot", "web"}) == ["serve (pid 5) with bot (pid 10), web (pid 20)"]
+    assert procs._running(("serve", "bot", "web")) == {"serve": 5, "bot": 10, "web": 20}
+
+
+def test_restart_always_brings_back_serve_never_bare_children(monkeypatch, tmp_path):
+    from quartermaster.ops import schedule
+
+    started = []
+    monkeypatch.setattr(procs, "quit_all", lambda only: ["bot (pid 10)"])
+    monkeypatch.setattr(schedule, "service_installed", lambda: False)
+    monkeypatch.setattr(procs, "start_detached", lambda name, out: started.append(name))
+    monkeypatch.setattr(procs, "_running", lambda names: {"serve": 5, "bot": 10, "web": 20})
+    stopped, up, failed = procs.restart(tmp_path)
+    assert started == ["serve"] and up == ["serve (pid 5) with bot (pid 10), web (pid 20)"] and failed == []
+
+
 def test_quit_all_spares_itself_and_kills_the_rest(monkeypatch):
     rows = [_p(10, 1, "qm.exe", r"C:\v\qm.exe bot"), _p(30, 1, "qm.exe", r"C:\v\qm.exe digest"),
             _p(99, 1, "qm.exe", r"C:\v\qm.exe quit")]

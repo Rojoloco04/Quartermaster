@@ -29,12 +29,19 @@ import discord
 from .. import agent
 from ..chat import continue_or_fresh, describe_tool, FRESH_NOTE, lock_path, session_control, TurnLock
 from ..config import current_prefs, load_settings, Settings
-from . import moderation
+from . import held, moderation
 
 
 log = logging.getLogger(__name__)
 
 CHUNK = 1900  # Discord's ceiling is 2000; leave room for fence repair.
+
+# What the public profile sees of the channel before a mention: the newest
+# ``public.context_messages``, each line trimmed, the whole block capped
+# (oldest lines dropped first), whichever limit comes first. No time window:
+# in a quiet channel the conversation being asked about may be hours old.
+CONTEXT_LINE_CHARS = 300
+CONTEXT_TOTAL_CHARS = 5000
 
 
 class HourlyQuota:
@@ -53,6 +60,45 @@ class HourlyQuota:
             return False
         self._uses[key] = recent + [now]
         return True
+
+
+def offer_now(row, night: bool) -> bool:
+    """Whether a pending Notion change is offered yet. The weekly tidy runs at
+    night with the other chores, and its proposal waits for the morning like
+    their DMs; one the owner asked for (source 'agent') is offered at once."""
+    return not (night and row["source"] == "tidy")
+
+
+def _context_line(m: discord.Message, me: discord.abc.User | None) -> str:
+    name = "Quartermaster (you)" if me is not None and m.author.id == me.id else m.author.display_name
+    ref = m.reference.resolved if m.reference is not None else None
+    if isinstance(ref, discord.Message):
+        name += f" (replying to {ref.author.display_name})"
+    text = " ".join(m.clean_content.split())
+    if not text:
+        text = "[attachment]" if m.attachments else "[embed]" if m.embeds else ""
+    if len(text) > CONTEXT_LINE_CHARS:
+        text = text[:CONTEXT_LINE_CHARS] + "..."
+    return f"{name}: {text}" if text else ""
+
+
+async def channel_context(message: discord.Message, me: discord.abc.User | None, limit: int) -> str:
+    """The channel's recent messages before ``message``, oldest first, one
+    line each, so "is he spitting fire?" can be answered. Empty when disabled
+    or unreadable (no Read Message History): a reply without context beats
+    no reply. The public profile has no tools, so what's here can only shape
+    words, never actions."""
+    if limit <= 0:
+        return ""
+    try:
+        found = [m async for m in message.channel.history(limit=limit, before=message)]
+    except discord.HTTPException as exc:
+        log.warning("couldn't read history in #%s: %s", getattr(message.channel, "name", "?"), exc)
+        return ""
+    lines = [line for m in reversed(found) if (line := _context_line(m, me))]
+    while lines and sum(len(line) + 1 for line in lines) > CONTEXT_TOTAL_CHARS:
+        lines.pop(0)
+    return "\n".join(lines)
 
 
 def split_message(text: str, limit: int = CHUNK) -> list[str]:
@@ -151,9 +197,11 @@ class Quartermaster(discord.Client):
         await self.wait_until_ready()
         offered: set[int] = set()
         while True:
+            await self._deliver_held()
             try:
+                night = held.quiet(self.settings)
                 with db.session(self.settings.db_path) as conn:
-                    waiting = [r for r in notion_writes.pending(conn) if r["id"] not in offered]
+                    waiting = [r for r in notion_writes.pending(conn) if r["id"] not in offered and offer_now(r, night)]
                 for row in waiting:
                     offered.add(row["id"])
                     task = asyncio.create_task(self._ask_approval(row))
@@ -162,6 +210,22 @@ class Quartermaster(discord.Client):
             except Exception:  # noqa: BLE001 - a bad poll must not end the loop
                 log.exception("checking for pending Notion changes failed")
             await asyncio.sleep(20)
+
+    async def _deliver_held(self) -> None:
+        """Send the night jobs' held DMs once it's ``digest.hour`` (``held``).
+        Each is dropped only after it's sent; a failure is retried next poll."""
+        try:
+            items = held.due(self.settings)
+            if not items:
+                return
+            owner = await self.fetch_user(self.settings.discord_owner_id)
+            for item in items:
+                for part in split_message(item["text"]):
+                    await owner.send(part)
+                held.delivered(self.settings, item["id"])
+                log.info("delivered the held %s DM (held at %s)", item.get("what"), item.get("held_at"))
+        except Exception:  # noqa: BLE001 - a bad poll must not end the loop
+            log.exception("delivering held DMs failed")
 
     async def _ask_approval(self, row) -> None:
         from .. import db
@@ -311,7 +375,8 @@ class Quartermaster(discord.Client):
 
     async def answer_publicly(self, message: discord.Message, prompt: str) -> None:
         """A guild mention that isn't an action: a plain reply from the public
-        profile (no tools, no vault). Not under the owner's busy lock, so a
+        profile (no tools, no vault), given the channel's recent messages so it
+        can follow the conversation. Not under the owner's busy lock, so a
         friend's chat never makes a DM wait, and capped per person per hour
         because it spends the owner's subscription."""
         limit = int(current_prefs(self.settings).get("public", {}).get("replies_per_hour", 20))
@@ -320,7 +385,15 @@ class Quartermaster(discord.Client):
             await message.channel.send("I've talked enough for one hour. Try me again later.")
             return
         async with message.channel.typing():
-            reply = await agent.ask(f"{message.author.display_name}: {prompt}", self.public, self.settings.claude_cli)
+            context_limit = int(current_prefs(self.settings).get("public", {}).get("context_messages", 25))
+            context = await channel_context(message, self.user, context_limit)
+            asking = f"{message.author.display_name}: {prompt}"
+            if context:
+                asking = (
+                    "Recent messages in this channel, oldest first (context only):\n"
+                    f"{context}\n\nThe message to you:\n{asking}"
+                )
+            reply = await agent.ask(asking, self.public, self.settings.claude_cli)
         text = reply.text.strip() if reply.ok else ""
         if not text:
             log.warning("public reply failed: %s", reply.error or "empty")

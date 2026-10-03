@@ -228,7 +228,8 @@ def cmd_init(args: argparse.Namespace) -> int:
         subprocess.run(["git", "init", "-q"], cwd=vault, check=False)
         (vault / ".gitignore").write_text(
             "# Machine state - rebuildable, and noisy in diffs.\n"
-            "System/state.db\nSystem/state.db-wal\nSystem/state.db-shm\nSystem/turn.lock\n",
+            "System/state.db\nSystem/state.db-wal\nSystem/state.db-shm\nSystem/turn.lock\n"
+            "System/held-dms.json\nSystem/held-dms.tmp\n",
             encoding="utf-8",
         )
         print("Initialised a git repo in the vault. Add your private GitHub remote when ready.")
@@ -297,14 +298,31 @@ def cmd_bot(args: argparse.Namespace) -> int:
         lock.release()
 
 
+def _web_url_path(settings) -> Path:
+    return settings.log_path.parent / "web.url"
+
+
 def cmd_web(args: argparse.Namespace) -> int:
+    from .ops import procs
     from .web import serve
 
     settings = load_settings()
-    if not (lock := _only_instance(settings, "web")):
-        return 1
+    url = f"http://{args.host}:{args.port}/"
+    lock = procs.instance_lock(settings.log_path.parent, "web")
+    if lock is None:
+        # Already up (usually under qm serve): hand over its link rather than
+        # a refusal. The running one wrote where it listens; it may not be
+        # where this invocation's flags point.
+        try:
+            url = _web_url_path(settings).read_text(encoding="utf-8").strip() or url
+        except OSError:
+            pass
+        log.info("another qm web is already running at %s; not starting a second", url)
+        print(f"qm web is already running: {url}")
+        return 0
     try:
-        print(f"Dashboard at http://{args.host}:{args.port}/  (Ctrl+C to stop)")
+        _web_url_path(settings).write_text(url, encoding="utf-8")
+        print(f"Dashboard at {url}  (Ctrl+C to stop)")
         return serve(settings, host=args.host, port=args.port)
     finally:
         lock.release()
@@ -342,7 +360,23 @@ def _run_job(name: str, job, dry_run: bool, sent: str) -> int:
 def cmd_digest(args: argparse.Namespace) -> int:
     from . import digest
 
-    return _run_job("digest", digest.run_digest, args.dry_run, "Digest sent and archived.")
+    if args.reset:
+        with db.session(load_settings().db_path) as conn:
+            cleared = db.reset_digest_marks(conn)
+        print(f"Digest history cleared: {cleared['listings']} listings unmarked, "
+              f"{cleared['surfaced']} price/stale reminders forgotten. Mutes untouched.")
+        if not (args.test or args.dry_run):
+            return 0
+    if args.test:
+        def job(settings, dry_run):
+            return digest.run_digest(settings, test=True)
+        return _run_job("digest", job, False, "Test digest sent to your DMs (nothing marked shown, nothing archived).")
+    from .discord_bot import held
+
+    settings = load_settings()
+    sent = (f"Digest archived and held: the bot sends it at {held.morning_hour(settings):02d}:00."
+            if held.quiet(settings) else "Digest sent and archived.")
+    return _run_job("digest", digest.run_digest, args.dry_run, sent)
 
 
 def cmd_tidy(args: argparse.Namespace) -> int:
@@ -485,10 +519,11 @@ def cmd_schedule(args: argparse.Namespace) -> int:
             print(f"Scheduled: {line}")
         print(
             f"\nBot + web: started at logon and kept running ({schedule.SERVICE_TASK}; qm restart starts it now). "
-            f"Notion sync: daily at {schedule.SYNC_HOUR:02d}:00. "
-            f"Digest (with on-sales): {args.digest_cadence} at {int(settings.prefs['digest']['hour']):02d}:00. "
-            f"Reconcile: daily at {schedule.RECONCILE_TIME}. Vault push: daily at {schedule.PUSH_TIME}. "
-            f"Game server backup: daily at {schedule.BACKUP_TIME}."
+            f"Chores, daily: Notion sync {schedule.SYNC_TIME}, reconcile {schedule.RECONCILE_TIME}, "
+            f"Claude page tidy ({schedule.TIDY_DAY}) {schedule.TIDY_TIME}, "
+            f"digest ({args.digest_cadence}) {schedule.DIGEST_TIME}, vault push {schedule.PUSH_TIME}, "
+            f"game server backup {schedule.BACKUP_TIME}. "
+            f"Their DMs are held; the bot sends them at {int(settings.prefs['digest']['hour']):02d}:00."
         )
     elif args.action == "remove":
         for line in schedule.remove():
@@ -545,6 +580,36 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_help(args: argparse.Namespace, parser: argparse.ArgumentParser, sub) -> int:
+    """``qm help``: every command and what it does, flags included, from the
+    parser itself so it can't drift. ``qm help <command>`` is that command's
+    full ``-h``."""
+    if args.topic:
+        if args.topic not in sub.choices:
+            print(f"No command {args.topic!r}. qm help lists them.")
+            return 1
+        sub.choices[args.topic].print_help()
+        return 0
+    # choices includes aliases (stop for quit); list each parser once.
+    names: dict[int, list[str]] = {}
+    for name, p in sub.choices.items():
+        names.setdefault(id(p), []).append(name)
+    helps = {a.dest: a.help for a in sub._choices_actions}
+    width = max(len(", ".join(n)) for n in names.values())
+    print("qm <command> [options]   (qm help <command> for one command's details)\n")
+    for p_id, aliases in names.items():
+        p = sub.choices[aliases[0]]
+        print(f"  {', '.join(aliases):<{width}}  {helps.get(aliases[0], '')}")
+        for action in p._actions:
+            if action.dest == "help":
+                continue
+            if action.option_strings:
+                print(f"  {'':<{width}}    {', '.join(action.option_strings)}: {action.help}")
+            elif action.choices:
+                print(f"  {'':<{width}}    {action.dest}: {', '.join(map(str, action.choices))}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     # Windows consoles default to cp1252, which can't encode most of what a
     # model writes (em dashes, curly quotes, ...). Without this, `qm digest`
@@ -563,6 +628,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="qm", description="Quartermaster")
     sub = parser.add_subparsers(dest="command", required=True)
 
+    p_help = sub.add_parser("help", help="list every command, or show one command's options")
+    p_help.add_argument("topic", nargs="?", help="a command, e.g. digest")
+    p_help.set_defaults(func=lambda args: cmd_help(args, parser, sub))
+
     sub.add_parser("doctor", help="check configuration and dependencies").set_defaults(
         func=cmd_doctor
     )
@@ -576,18 +645,25 @@ def main(argv: list[str] | None = None) -> int:
                         help="refetch every page, and remove orphans even past the mass-deletion brake")
     p_sync.set_defaults(func=cmd_sync)
 
-    sub.add_parser("bot", help="run the Discord bot").set_defaults(func=cmd_bot)
-    sub.add_parser("serve", help="run bot + web, restarting them if they exit (the logon task runs this)").set_defaults(
+    sub.add_parser("bot", help="run the Discord bot in this terminal, for debugging (normally serve runs it)").set_defaults(func=cmd_bot)
+    sub.add_parser("serve", help="the supervisor: runs bot + web and restarts either if it exits (the logon task runs it)").set_defaults(
         func=cmd_serve)
 
-    p_web = sub.add_parser("web", help="local dashboard: bot status, jobs, turns, live log, guide")
+    p_web = sub.add_parser("web", help="local dashboard (prints its link if one is already running)")
     p_web.add_argument("--host", default="127.0.0.1", help="non-localhost requires QM_WEB_TOKEN")
-    p_web.add_argument("--port", type=int, default=8766)
+    p_web.add_argument("--port", type=int, default=8766, help="default 8766")
     p_web.set_defaults(func=cmd_web)
 
     p_digest = sub.add_parser("digest", help="build and send the digest (calendar, on-sales, events, wishlist, Notion)")
     p_digest.add_argument(
         "--dry-run", action="store_true", help="print what would be sent; don't send, archive, or record it"
+    )
+    p_digest.add_argument(
+        "--test", action="store_true", help="DM it to you as a test; don't archive it or mark anything shown"
+    )
+    p_digest.add_argument(
+        "--reset", action="store_true",
+        help="forget what earlier digests offered and showed (mutes stay); with --test/--dry-run, then run",
     )
     p_digest.set_defaults(func=cmd_digest)
 
@@ -620,7 +696,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("quit", aliases=["stop"], help="stop every running Quartermaster process (bot, web, jobs)").set_defaults(
         func=cmd_quit
     )
-    sub.add_parser("restart", help="restart the bot and dashboard in the background").set_defaults(
+    sub.add_parser("restart", help="restart serve with its bot and dashboard, in the background").set_defaults(
         func=cmd_restart
     )
 

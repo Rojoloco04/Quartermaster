@@ -196,7 +196,7 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
   <div class="tablewrap"><table>
     <tr><th>Profile</th><th>Used by</th><th>Runs in</th><th>Tools</th><th>Session</th><th>Model</th></tr>
     <tr><td><b>owner</b></td><td>your DMs, the web chat, the terminal</td><td>the vault</td><td class="y">vault files, web research, MCP</td><td>shared</td><td>Sonnet</td></tr>
-    <tr><td><b>public</b></td><td>chat when mentioned in a channel</td><td>own workspace</td><td class="n">none</td><td>none</td><td>Haiku</td></tr>
+    <tr><td><b>public</b></td><td>chat when mentioned in a channel</td><td>own workspace</td><td class="n">none</td><td>none (sees the channel's last 25 messages)</td><td>Haiku</td></tr>
     <tr><td><b>parser</b></td><td>moderation requests</td><td>own workspace</td><td class="n">none, JSON out</td><td>none</td><td>Haiku</td></tr>
     <tr><td><b>digest</b></td><td>picking the digest's events</td><td>own workspace</td><td class="n">none, JSON out</td><td>none</td><td>Sonnet</td></tr>
     <tr><td><b>tidy</b></td><td>weekly Claude page tidy</td><td>own workspace</td><td class="n">none</td><td>none</td><td>Sonnet</td></tr>
@@ -221,7 +221,7 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
       <h5>How it stays true</h5>
       <ol>
         <li>You say something changed. The agent fixes <em>every</em> file that states it in the same turn.</li>
-        <li>Daily at 07:30, <code>reconcile</code> merges duplicates and drops dates that have passed, with backups.</li>
+        <li>Nightly at 03:05, <code>reconcile</code> merges duplicates and drops dates that have passed, with backups.</li>
         <li>Disagreements it can't settle go to <code>conflicts.md</code> and to you as a question.</li>
         <li>You answer in plain words; the answer propagates to every file.</li>
       </ol>
@@ -234,20 +234,23 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
 <section>
   <h3>A day on the schedule</h3>
   <p class="sub">Windows Task Scheduler, while logged in. Each job is a fresh <code>qm</code> process; a failure is logged, never DM'd as noise.</p>
-  <div class="timeline" role="img" aria-label="Morning schedule: 05:00 game server backup, 07:00 Notion sync, 07:30 reconcile, 08:00 digest, Sunday 09:00 Claude page tidy">
+  <div class="timeline" role="img" aria-label="Night schedule: 03:00 Notion sync, 03:05 reconcile, Sunday 03:10 Claude page tidy, 03:15 digest built, 03:30 vault push, 03:35 game server backup; at 08:00 the bot sends the held digest and questions">
     <div class="axis"></div>
-    <span class="tick" style="left:calc(24px + (100% - 48px) * 0)">05:00</span>
-    <span class="tick" style="left:calc(24px + (100% - 48px) * .5)">08:00</span>
-    <span class="tick" style="left:calc(24px + (100% - 48px) * 1)">11:00</span>
-    <div class="ev" style="--k:var(--c-store); left:calc(24px + (100% - 48px) * 0); transform:translateX(-10%)"><b>05:00</b>game backup</div>
-    <div class="ev low" style="--k:var(--c-store); left:calc(24px + (100% - 48px) * .3333)"><b>07:00</b>Notion sync</div>
-    <div class="ev" style="--k:var(--c-core); left:calc(24px + (100% - 48px) * .4167)"><b>07:30</b>reconcile</div>
-    <div class="ev low" style="--k:var(--c-guard); left:calc(24px + (100% - 48px) * .5)"><b>08:00</b>digest DM</div>
-    <div class="ev" style="--k:var(--c-model); left:calc(24px + (100% - 48px) * .6667)"><b>Sun 09:00</b>Claude page tidy</div>
+    <span class="tick" style="left:calc(24px + (100% - 48px) * 0)">03:00</span>
+    <span class="tick" style="left:calc(24px + (100% - 48px) * .6)">03:30</span>
+    <span class="tick" style="left:calc(24px + (100% - 48px) * 1)">08:00</span>
+    <div class="ev" style="--k:var(--c-store); left:calc(24px + (100% - 48px) * 0); transform:translateX(-10%)"><b>03:00</b>Notion sync</div>
+    <div class="ev low" style="--k:var(--c-core); left:calc(24px + (100% - 48px) * .1)"><b>03:05</b>reconcile</div>
+    <div class="ev" style="--k:var(--c-model); left:calc(24px + (100% - 48px) * .2)"><b>Sun 03:10</b>page tidy</div>
+    <div class="ev low" style="--k:var(--c-model); left:calc(24px + (100% - 48px) * .3)"><b>03:15</b>digest built</div>
+    <div class="ev" style="--k:var(--c-store); left:calc(24px + (100% - 48px) * .6)"><b>03:30</b>vault push</div>
+    <div class="ev low" style="--k:var(--c-store); left:calc(24px + (100% - 48px) * .7)"><b>03:35</b>game backup</div>
+    <div class="ev" style="--k:var(--c-guard); left:calc(24px + (100% - 48px) * 1); transform:translateX(-90%)"><b>08:00</b>held DMs sent</div>
   </div>
-  <p class="sub">The digest is daily at <code>digest.hour</code> (weekly on Sundays if you prefer) and carries the on-sales of acts you like.
-  Sync runs first, so the other jobs read a fresh mirror.
-  Last, at 23:00, <code>qm push</code> commits the vault and pushes it to its private remote, which is its backup.</p>
+  <p class="sub">The chores run five minutes apart between 03:00 and 04:00 (the gap to 08:00 isn't to scale), so the ones that call Claude
+  spend a usage window that closes before the day starts. Sync runs first, so the others read a fresh mirror; the push runs after them,
+  so one commit carries the night's changes. Nothing messages you at night: the digest (daily, or weekly if you prefer), reconcile's
+  questions and the tidy's Confirm are held, and the always-running bot sends them at <code>digest.hour</code>.</p>
 </section>
 
 <section>
@@ -260,7 +263,7 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
     <div class="mod"><code>chat.py</code><span>what the DM and web chat share: stop, start fresh, the turn lock</span></div>
     <div class="mod"><code>knowledge/</code><span>Notion sync and approved writes, reconcile, Claude page tidy, stale pages, mutes</span></div>
     <div class="mod"><code>digest/</code><span>collectors → the digest's JSON → rendered message; the model only picks events</span></div>
-    <div class="mod"><code>discord_bot/</code><span>the bot, moderation plans and execution, Minecraft from a channel, one-shot DMs</span></div>
+    <div class="mod"><code>discord_bot/</code><span>the bot, moderation plans and execution, Minecraft from a channel, one-shot DMs and the ones held overnight</span></div>
     <div class="mod"><code>web/</code><span><code>qm web</code>: app, page views, the brain graph</span></div>
     <div class="mod"><code>games/</code><span>Minecraft and Satisfactory servers, and the registry /servers lists</span></div>
     <div class="mod"><code>ops/</code><span>supervisor and locks, Task Scheduler, vault push, game backups, dev queue</span></div>

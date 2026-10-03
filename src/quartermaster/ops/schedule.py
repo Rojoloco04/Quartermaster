@@ -36,26 +36,29 @@ TASKS = (SERVICE_TASK, SYNC_TASK, TIDY_TASK, DIGEST_TASK, RECONCILE_TASK, PUSH_T
 # presale check was folded into the daily digest on 2026-10-03.
 RETIRED_TASKS = ("Quartermaster Presale Check",)
 
-# Before the digest, so the stale-page scan reads a mirror that is at most a
-# day old.
-SYNC_HOUR = 7
-
-# Weekly, Sunday morning: the owner is around to confirm the replace, and it
-# lands after the morning digest.
-TIDY_DAY, TIDY_HOUR = "SUN", 9
-
-# After the sync (so it compares facts with a fresh mirror) and before the
-# digest, so the digest reads reconciled facts.
-RECONCILE_TIME = "07:30"
-
-# The git remote is the vault's only backup. Last thing in the day, after the
-# digest, so one commit carries the day's changes. The PC stays on, so a fixed
-# time is fine; a missed run is picked up by the next one.
-PUSH_TIME = "23:00"
-
-# The game servers' zips to the backup drive. Early morning, when friends are
-# least likely to be on (a running Minecraft server pauses autosave for the copy).
-BACKUP_TIME = "05:00"
+# The chores, one after another between 03:00 and 04:00. The three that call
+# the model (reconcile, tidy, the digest) then spend a 5-hour usage window that
+# closes by 08:00, before the owner's day starts. Their DMs (the digest,
+# reconcile's questions, tidy's Confirm) are held and the bot delivers them at
+# ``digest.hour`` (``discord_bot.held``). Five minutes apart: in the log the
+# sync takes ~10s, reconcile ~45s, the digest ~2 min. The PC stays on, so
+# fixed times are fine; a missed run is picked up by the next one.
+#
+# First the Notion sync: reconcile compares facts with the mirror and the
+# digest's stale-page scan reads it.
+SYNC_TIME = "03:00"
+# After the sync, before the digest, so the digest reads reconciled facts.
+RECONCILE_TIME = "03:05"
+# Weekly. Its proposal is held for the morning like the DMs.
+TIDY_DAY, TIDY_TIME = "SUN", "03:10"
+# Built and archived now, delivered by the bot at digest.hour.
+DIGEST_TIME = "03:15"
+# The git remote is the vault's only backup. After the others, so one commit
+# carries the previous day plus this morning's reconcile and digest.
+PUSH_TIME = "03:30"
+# The game servers' zips to the backup drive, when friends are least likely to
+# be on (a running Minecraft server pauses autosave for the copy).
+BACKUP_TIME = "03:35"
 
 
 @dataclass(frozen=True)
@@ -75,22 +78,22 @@ def _job(subcommand: str) -> list[str]:
 def build_tasks(settings: Settings, digest_cadence: str) -> list[ScheduledTask]:
     """Pure: what would be scheduled, without touching the OS. `digest_cadence`
     is a proof-of-concept knob - `daily` for now, `weekly` once the owner is
-    happy with what it sends. The digest's hour is ``digest.hour`` (08:00:
-    on-sales are in it, and must land before the ticket windows open)."""
+    happy with what it sends. The digest is built at ``DIGEST_TIME`` and
+    delivered by the bot at ``digest.hour`` (08:00: on-sales are in it, and
+    must land before the ticket windows open)."""
     if digest_cadence not in ("daily", "weekly"):
         raise ValueError(f"digest_cadence must be 'daily' or 'weekly', got {digest_cadence!r}")
 
-    hour = int(settings.prefs["digest"]["hour"])
     weekday = str(settings.prefs["digest"]["weekday"])[:3].upper()
 
     if digest_cadence == "weekly":
-        digest_schedule = ["/sc", "weekly", "/d", weekday, "/st", f"{hour:02d}:00"]
+        digest_schedule = ["/sc", "weekly", "/d", weekday, "/st", DIGEST_TIME]
     else:
-        digest_schedule = ["/sc", "daily", "/st", f"{hour:02d}:00"]
+        digest_schedule = ["/sc", "daily", "/st", DIGEST_TIME]
 
     return [
-        ScheduledTask(SYNC_TASK, _job("sync"), ["/sc", "daily", "/st", f"{SYNC_HOUR:02d}:00"]),
-        ScheduledTask(TIDY_TASK, _job("tidy"), ["/sc", "weekly", "/d", TIDY_DAY, "/st", f"{TIDY_HOUR:02d}:00"]),
+        ScheduledTask(SYNC_TASK, _job("sync"), ["/sc", "daily", "/st", SYNC_TIME]),
+        ScheduledTask(TIDY_TASK, _job("tidy"), ["/sc", "weekly", "/d", TIDY_DAY, "/st", TIDY_TIME]),
         ScheduledTask(DIGEST_TASK, _job("digest"), digest_schedule),
         ScheduledTask(RECONCILE_TASK, _job("reconcile"), ["/sc", "daily", "/st", RECONCILE_TIME]),
         ScheduledTask(PUSH_TASK, _job("push"), ["/sc", "daily", "/st", PUSH_TIME]),

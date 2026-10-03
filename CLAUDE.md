@@ -16,11 +16,12 @@ The vault's system folder is `System/` (was `90-System/` until 2026-09-22).
 - The bot stays native, not in Docker: a Linux container would split the shared
   session (whose folder is named after the vault's Windows path) and would need
   `procs`/`schedule` redone.
-- First morning of the rebuilt digest is 2026-10-04 at 08:00 (the presale
-  task is retired into it). Check it arrived, its format, and that the
-  dashboard shows the digest job green. The 07:30 reconcile had failed every
-  morning it found a conflict since 2026-09-27 (fixed 2026-10-03); check it
-  DMs again.
+- First morning of the rebuilt digest and of the night chores is 2026-10-04:
+  sync 03:00, reconcile 03:05, digest built 03:15, push 03:30, backup 03:35,
+  and the bot delivers the held digest (then reconcile's questions, if any) at
+  08:00. Check it arrived, its format, that nothing buzzed at night, and that
+  the dashboard shows every job green. Reconcile had failed every morning it
+  found a conflict since 2026-09-27 (fixed 2026-10-03); check its DM comes.
 - Last.fm is configured but the account started 2026-09-22 with 0 scrobbles, so
   it adds nothing until Spotify scrobbling fills it. Spotify stays until then
   (queued: remove it once Last.fm can replace it).
@@ -42,12 +43,13 @@ turn and digest, read fresh each turn so the bot needs no restart.
 **Keeping knowledge consistent.** Two layers. Immediately: `OWNER_LIMITS` tells
 the owner agent that when a fact changes it greps `facts/` and fixes every
 place that states it (and proposes a Notion edit if Notion is wrong). Daily at
-07:30, `knowledge/reconcile.py`: one Sonnet call (no tools, `output_schema`) reads facts,
+03:05, `knowledge/reconcile.py`: one Sonnet call (no tools, `output_schema`) reads facts,
 lessons and the non-empty Notion mirror (~20k tokens) and returns edits and
 conflicts. Code applies edits only to existing `facts/*.md`, skips a file that
 changed mid-run or would lose >60%, and backs up the old version to
 `System/backups/reconcile/`. Conflicts overwrite `System/conflicts.md`
-(on /settings) and are DM'd as questions; `Profile.conflicts_file` puts them in
+(on /settings) and are DM'd as questions (held overnight, see Night chores);
+`Profile.conflicts_file` puts them in
 every owner turn, so a plain answer is understood and propagated. Nothing found
 sends nothing. On request from a DM, the `qm` server's `reconcile_knowledge`
 runs the same thing but returns the result into the turn instead of DMing it
@@ -96,7 +98,7 @@ prints it and its path. For each open item, one at a time:
 
 A personal agent sharing one markdown vault and one Claude subscription:
 
-1. **A daily digest** — Discord DM at 08:00: calendar, on-sales of acts the
+1. **A daily digest** — built at 03:15, Discord DM at 08:00: calendar, on-sales of acts the
    owner likes, events worth travelling to, wishlist price drops, stale Notion
    pages. `qm schedule install --digest-cadence weekly` switches to Sundays.
 2. **An assistant** — Discord DMs and Claude Code, sharing one conversation.
@@ -148,6 +150,7 @@ src/quartermaster/
 ├── discord_bot/         the bot
 │   ├── bot.py           routing, streaming replies, the approvals watcher
 │   ├── moderation.py    preview/confirm/execute;  plans.py: OpsPlan, permissions, matching (pure)
+│   ├── held.py          DMs from the night chores, held until digest.hour, delivered by the bot
 │   ├── minecraft_chat.py the Minecraft server from a channel, op-gated
 │   └── send.py          one-shot DM (digest, reconcile)
 ├── web/                 qm web
@@ -176,10 +179,14 @@ vault-template/          copied into a new vault by `qm init`
 ```bash
 ./.venv/Scripts/qm.exe doctor              # first thing when anything misbehaves
 ./.venv/Scripts/qm.exe quit                # stop everything (bot, web, running jobs); alias `stop`
-./.venv/Scripts/qm.exe restart             # restart bot + web (through the logon task; jobs untouched)
+./.venv/Scripts/qm.exe restart             # restart serve with bot + web (through the logon task; jobs untouched)
 ./.venv/Scripts/qm.exe bot                 # foreground bot, for debugging (refused while one runs)
+./.venv/Scripts/qm.exe web                 # dashboard; if one runs, prints its link (web.url beside the log)
 ./.venv/Scripts/qm.exe reconcile --dry-run # what the daily knowledge check would change and ask
+./.venv/Scripts/qm.exe help                # every command, one line each, with options
 ./.venv/Scripts/qm.exe digest --dry-run    # preview the digest (real API calls, ~2 min)
+./.venv/Scripts/qm.exe digest --test       # DM it with a test note; marks nothing shown, archives nothing
+./.venv/Scripts/qm.exe digest --reset      # forget what was offered/shown (listings marks, surfaced); mutes stay
 ./.venv/Scripts/qm.exe schedule install --digest-cadence daily   # or weekly
 ./.venv/Scripts/python.exe -m pytest tests/ -q
 ```
@@ -191,10 +198,18 @@ restarts one that exits after 5s, doubling to 5 min while it keeps dying young,
 reset after 10 min healthy. The task is registered from XML (`schedule.service_xml`)
 because `schtasks` flags can't set what it needs: no execution time limit (the
 default kills a task after 72h), keep running on battery, ignore a second start.
-No admin needed. `qm restart` with the task registered kills serve/bot/web and
-`schtasks /run`s it, then waits up to 20s for both children (the task, pythonw
-and two launchers are slow). `qm quit` stops the supervisor too; it stays down
-until `qm restart` or the next logon.
+No admin needed. Bot and web run **only** this way (Task Scheduler starts a
+process but doesn't keep one alive, hence the supervisor); `qm bot`/`qm web` by
+hand are for foreground debugging. `qm restart` kills serve with its children
+(and a stray hand-started bot/web), then `schtasks /run`s the task, or without
+the task starts `qm serve` detached (`CREATE_NO_WINDOW`, breakaway from the
+terminal's job when allowed, output to `serve.out` beside the log), and waits
+up to 20s for serve and both children (the task, pythonw and the launchers are
+slow). Both stopped and started print as one tree: `serve (pid 5) with bot
+(pid 10), web (pid 20)`; whatever didn't come up is FAILED with its `.out`
+tail. Before 2026-10-03 the no-task path started bot and web bare, and the
+report listed the killed serve without its children. `qm quit` stops the
+supervisor too; it stays down until `qm restart` or the next logon.
 
 **One instance each, whatever starts it.** `qm bot`, `qm web` and `qm serve`
 each hold `<name>.lock` beside the log (an OS lock, released when the process
@@ -205,15 +220,30 @@ retry gap won the lock while the supervisor's copies were refused and backed
 off. `procs.ours` matches qm.exe and
 python running `qm.exe`/`quartermaster.cli` only: matching "quartermaster"
 anywhere once killed VS Code's language servers (they run on this venv).
-Without the task, `qm restart` kills only processes whose qm subcommand is `bot`/`web`, starts
-both with `CREATE_NO_WINDOW` (`DETACHED_PROCESS` opened a blank console per
-process: qm.exe's python child allocates its own) (+ breakaway from the terminal's job when allowed)
-and output to `bot.out`/`web.out` beside the log, and reports FAILED with that
-output's tail if one exits within 4s. Live-verified 2026-09-22.
+`CREATE_NO_WINDOW`, not `DETACHED_PROCESS`: the latter opened a blank console
+per process (qm.exe's python child allocates its own). `qm web` while one
+runs prints its link (the running one writes `web.url` beside the log) and
+exits 0.
 
-**Scheduled tasks** (logged-in only): the service at logon, Notion sync 07:00 daily, reconcile 07:30
-daily, Claude page tidy Sundays 09:00, digest at `digest.hour` (08:00) daily
-or weekly, vault push 23:00 daily, game server backup 05:00 daily. Each is registered as
+**Scheduled tasks** (logged-in only): the service at logon, then the night
+chores five minutes apart (`schedule.py`): Notion sync 03:00, reconcile 03:05,
+Claude page tidy Sundays 03:10, digest 03:15 (daily or weekly), vault push
+03:30, game server backup 03:35. In the log the sync takes ~10s, reconcile
+~45s, the digest ~2 min, so each finishes before the next reads its output.
+
+**Night chores, morning DMs** (`discord_bot/held.py`). The model-using jobs run
+at 3am so their 5-hour usage window closes by 08:00, before the owner's day.
+Nothing may buzz a phone then: before `digest.hour` (midnight to 08:00, read
+fresh), `send.send_or_hold` writes a job's DM to `System/held-dms.json`
+(gitignored) instead of sending it, and the bot's approvals loop (every 20s)
+delivers what's held once the hour comes, the digest first, removing each only
+after it's sent (a down bot delivers late, never loses). Tidy's proposal
+(`pending_writes.source = 'tidy'`) is likewise not offered until then; one the
+owner asked for at night is offered at once. A held digest was archived and
+marked shown at 03:15. `qm digest`/`qm reconcile` by hand at night hold too;
+`qm digest --test` always sends at once.
+
+Each is registered as
 `pythonw -m quartermaster.cli <job>`, never `qm.exe` (a console program: every
 run opened a Windows Terminal, noticed at the 2026-09-22 18:00 digest); under
 pythonw, `cli.main` re-runs the job once as python.exe with `CREATE_NO_WINDOW`,
@@ -297,7 +327,13 @@ preview. `moderation.handle` returns False for chat and the bot answers with
 the public profile (`answer_publicly`): no tools, no vault, no MCP, prompt
 prefixed with the sender's name, outside the owner's busy lock, and capped at
 `public.replies_per_hour` per person (`HourlyQuota`, in memory, read fresh)
-because friends' chat spends the owner's subscription. Non-owner DMs are still
+because friends' chat spends the owner's subscription. Before the message it
+gets the channel's newest `public.context_messages` (25) or 5000 characters,
+whichever comes first, with no time window (`bot.channel_context`: oldest
+first, the bot's own lines as "Quartermaster (you)", lines trimmed to 300;
+nothing if history can't be read).
+Safe because the profile has no tools: channel text can only shape words. The
+parser doesn't get it; it decides from the mention alone. Non-owner DMs are still
 ignored.
 
 Deliberate — don't "fix":
@@ -369,7 +405,7 @@ drops it from the mirror. A restart re-offers anything
 still pending, so an earlier message's buttons stop responding - the newest DM
 for that change is the live one. Losing a proposal is worse than a duplicate.
 
-**Tidying** (`knowledge/claude_tidy.py`, `qm tidy`, Sundays 09:00): one model call
+**Tidying** (`knowledge/claude_tidy.py`, `qm tidy`, Sundays 03:10, offered at 08:00): one model call
 rewrites the Claude page without its stale parts and *proposes* the replace. A
 rewrite that would cut the page by more than 60% is dropped rather than shown -
 a tidy prunes, it doesn't gut. The Notion integration needs "Insert content".
@@ -450,7 +486,7 @@ server's `satisfactory_status/start/stop/save`, a /servers tab. Deliberate:
 
 ## Game server backups (`ops/game_backup.py`)
 
-`qm backup`, daily 05:00: one zip per game in `backups.dir`
+`qm backup`, daily 03:35: one zip per game in `backups.dir`
 (`F:\Backups\servers\<game>\<YYYY-MM-DD_HHMMSS>.zip`; F: is the HDD, the live
 installs stay on the SSD). A game opts in with `backup_sources(settings)`
 ((folder, path inside it) pairs, empty before setup) and optionally
@@ -470,7 +506,7 @@ installs stay on the SSD). A game opts in with `backup_sources(settings)`
   its last backup.
 - Live-verified 2026-10-03: both servers zipped to F: (Minecraft 6.5MB,
   Satisfactory 45MB, ~4s), a second run skipped both, and a run with Minecraft
-  up flushed it and left autosave on. Not yet: the 05:00 task firing.
+  up flushed it and left autosave on. Not yet: the scheduled task firing.
 
 ## Mutes
 
@@ -545,7 +581,9 @@ without `continue_conversation`, which makes a new newest session.
 
 ## The digest (`digest/`)
 
-Daily at 08:00, one DM. `digest.build` runs the collectors and returns the
+Built at 03:15 with the night chores (archived and marked shown then), held,
+and delivered by the bot at `digest.hour` (08:00): one DM. The calendar and
+mutes are as of 03:15. `digest.build` runs the collectors and returns the
 digest's JSON; `digest/render.py` turns it into the message. Code writes every
 header, name, date and link (`###` headings, `-#` subtext, bold acts, masked
 `[label](<url>)` links so twenty links aren't twenty embeds), so the layout is

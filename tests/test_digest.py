@@ -150,6 +150,7 @@ def settings(tmp_path: Path, monkeypatch) -> Settings:
     monkeypatch.setattr(digest.google, "calendar_events", lambda *a, **k: [])
     monkeypatch.setattr(digest.prices, "check_all", lambda s, c: {"drops": [], "failures": []})
     monkeypatch.setattr(digest.stale, "find_stale_pages", lambda s, c: [])
+    monkeypatch.setattr("quartermaster.discord_bot.held.quiet", lambda s, now=None: False)  # sent, not held
     return Settings(vault=vault, prefs=_deep_merge(DEFAULTS, {"digest": {"ignore_calendar": ["sam"]}}))
 
 
@@ -237,3 +238,28 @@ def test_passes_named_up_front_are_labelled_by_the_part_that_differs():
     ])
     assert it["title"] == "Wobbleween"
     assert [l["label"] for l in it["listings"]] == ["2 Day Pass", "Friday Pass", "Saturday Pass"]
+
+
+def test_a_test_run_dms_with_a_note_and_marks_nothing_then_reset_forgets_a_real_run(settings, monkeypatch):
+    monkeypatch.setattr(digest.ticketmaster, "onsales_between", lambda s, d, n: [
+        lst("o1", "TOOL - FEAR INOCULUM", ("Tool",), "2026-12-01", onsale_at="2026-10-10T15:00:00Z")])
+    monkeypatch.setattr(digest.ticketmaster, "events_for_bands", lambda s, n, prefer=None: {"local": [lst("e1")]})
+
+    async def fake_ask(prompt, profile, cli):
+        return agent.Reply(text="", structured={"picks": [{"id": "e1", "why": "your top artist"}]})
+
+    sent = []
+    monkeypatch.setattr(agent, "ask", fake_ask)
+    monkeypatch.setattr("quartermaster.discord_bot.send.send_dm", lambda s, text: sent.append(text))
+
+    text = digest.run_digest(settings, test=True)
+    assert sent == [f"{digest.TEST_NOTE}\n{text}"] and "Fear Inoculum" in text
+    assert not settings.digests_dir.exists()
+    assert digest.run_digest(settings, dry_run=True) == text  # nothing was marked
+
+    digest.run_digest(settings)
+    assert digest.run_digest(settings, dry_run=True) == ""  # a real run marks
+    with db.session(settings.db_path) as conn:
+        assert db.reset_digest_marks(conn) == {"listings": 2, "surfaced": 0}
+        assert db.listings_by_id(conn, ["e1"])["e1"]["first_seen"]  # observations stay
+    assert digest.run_digest(settings, dry_run=True) == text

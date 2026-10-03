@@ -105,8 +105,23 @@ def test_run_applies_asks_and_dms(settings, monkeypatch):
     monkeypatch.setattr(Settings, "require", lambda self, *names: None)
     assert "Do you already have tickets" in reconcile.run_reconcile(settings, dry_run=True)
     assert sent == [] and not reconcile.conflicts_path(settings).exists()
+    monkeypatch.setattr("quartermaster.discord_bot.held.quiet", lambda s, now=None: False)  # by day
     reconcile.run_reconcile(settings)
     assert len(sent) == 1 and "which is right" in sent[0]
+
+
+def test_the_nightly_run_holds_its_questions_for_the_bot(settings, monkeypatch):
+    from quartermaster.discord_bot import held
+
+    async def fake_ask(prompt, profile, cli):
+        return agent.Reply(text="", structured={"edits": [], "conflicts": [CONFLICT]})
+
+    monkeypatch.setattr(agent, "ask", fake_ask)
+    monkeypatch.setattr("quartermaster.discord_bot.send.send_dm", lambda s, text: pytest.fail("sent a DM at 3am"))
+    monkeypatch.setattr(held, "quiet", lambda s, now=None: True)
+    assert "Held" in reconcile.run_reconcile(settings)
+    [item] = held.load(settings)
+    assert item["what"] == "reconcile" and "Do you already have tickets" in item["text"] and "Held" not in item["text"]
 
 
 def test_run_from_chat_returns_conflicts_without_a_dm(settings, monkeypatch):
@@ -131,7 +146,7 @@ def test_quiet_when_consistent(settings, monkeypatch):
 
 def test_scheduled_daily_after_the_sync(settings):
     task = next(t for t in build_tasks(settings, "daily") if t.name == RECONCILE_TASK)
-    assert task.command[-1] == "reconcile" and "07:30" in task.schedule_args
+    assert task.command[-1] == "reconcile" and "03:05" in task.schedule_args
 
 
 def test_structured_output_is_allowed_only_with_a_schema(settings):

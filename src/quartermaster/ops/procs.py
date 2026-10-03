@@ -7,16 +7,16 @@ every python process running ``quartermaster``, then kills each tree
 (``taskkill /T``) so their claude.exe children go too. The command's own
 process and its parents are never touched.
 
-``qm restart`` stops only the bot and the dashboard (a scheduled job mid-run
-is left alone), then starts both again: through the logon task when it is
-registered (so the supervisor comes back too), else detached from the terminal.
-
-``qm serve`` is that supervisor: it runs the bot and the dashboard as children
-and restarts either one when it exits, backing off when one keeps crashing.
-The ``Quartermaster Service`` logon task starts it windowless (pythonw).
-Separately, ``qm bot`` and ``qm web`` each hold an OS lock for their whole run,
-so a second copy refuses to start however it was launched: two connected bots
-double-reply.
+The bot and the dashboard always run one way: as children of ``qm serve``,
+a supervisor that restarts either one when it exits (backing off while one
+keeps crashing). Task Scheduler only starts a process, it doesn't keep one
+alive, so something has to. The ``Quartermaster Service`` logon task starts
+it windowless (pythonw). ``qm restart`` stops that tree (a scheduled job
+mid-run is left alone) and starts it again: through the logon task when
+registered, else detached from the terminal. ``qm bot`` / ``qm web`` by hand
+are for debugging in the foreground; each holds an OS lock for its whole run,
+so a second copy refuses to start however it was launched: two connected
+bots double-reply.
 """
 
 from __future__ import annotations
@@ -80,26 +80,39 @@ def command(proc: dict) -> str | None:
     return None
 
 
-def describe(proc: dict) -> str:
-    return f"{command(proc) or proc['name']} (pid {proc['pid']})"
+def describe(proc: dict, procs: list[dict] = ()) -> str:
+    """``bot (pid 10)``, or for the supervisor the children that go with it:
+    ``serve (pid 5) with bot (pid 10), web (pid 20)``. qm.exe is a launcher
+    whose python child runs the same subcommand; the outer one is named."""
+    text = f"{command(proc) or proc['name']} (pid {proc['pid']})"
+    kids, seen, queue = [], {command(proc)}, [proc["pid"]]
+    while queue:
+        parent = queue.pop(0)
+        for p in procs:
+            if p["ppid"] == parent:
+                queue.append(p["pid"])
+                if ours(p) and (name := command(p)) and name not in seen:
+                    seen.add(name)
+                    kids.append(f"{name} (pid {p['pid']})")
+    return text + (" with " + ", ".join(kids) if kids else "")
 
 
 def quit_all(only: set[str] | None = None) -> list[str]:
     """Kill every Quartermaster process tree, or only those running one of the
     subcommands in ``only``. Returns what was stopped."""
     stopped = []
-    for proc in targets(list_processes(), os.getpid()):
+    procs = list_processes()
+    for proc in targets(procs, os.getpid()):
         if only is not None and command(proc) not in only:
             continue
         result = subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc["pid"])], capture_output=True, text=True)
         if result.returncode == 0:
-            stopped.append(describe(proc))
+            stopped.append(describe(proc, procs))
     return stopped
 
 
 RESTARTED = ("bot", "web")
-STARTUP_GRACE = 4  # seconds a restarted process must survive to count as started
-SERVICE_GRACE = 20  # seconds to wait for the logon task to bring bot and web up
+SERVICE_GRACE = 20  # seconds to wait for serve to bring bot and web up
 
 
 def instance_lock(lock_dir: Path, name: str):
@@ -221,35 +234,35 @@ class Supervisor:
 
 
 def _running(names: tuple[str, ...]) -> dict[str, int]:
-    return {command(p): p["pid"] for p in list_processes() if ours(p) and command(p) in names}
+    """Subcommand -> pid, the outermost of a launcher and its python child
+    (the pid ``describe`` shows)."""
+    found = [p for p in list_processes() if ours(p) and command(p) in names]
+    by_pid = {p["pid"]: p for p in found}
+    return {command(p): p["pid"] for p in found
+            if not (p["ppid"] in by_pid and command(by_pid[p["ppid"]]) == command(p))}
 
 
 def restart(out_dir: Path) -> tuple[list[str], list[str], list[str]]:
-    """Stop the bot and dashboard, start both again. Returns (stopped,
-    started, failed); a failed entry carries the tail of its output file.
-    With the logon task registered, the supervisor is restarted with them."""
+    """Stop serve with its bot and dashboard (and a stray hand-started bot or
+    web), then start serve again. Returns (stopped, started, failed); a failed
+    entry carries the tail of its output file. Through the logon task when it
+    is registered, else ``qm serve`` detached from this terminal."""
     from . import schedule
 
+    stopped = quit_all({"serve", *RESTARTED})
     if schedule.service_installed():
-        stopped = quit_all({"serve", *RESTARTED})
         schedule.run_service()
-        # The task, pythonw and two launchers take a few seconds to reach the children.
-        deadline = time.monotonic() + SERVICE_GRACE
-        while len(up := _running(RESTARTED)) < len(RESTARTED) and time.monotonic() < deadline:
-            time.sleep(1)
-        started = [f"{name} (pid {up[name]}, supervised)" for name in RESTARTED if name in up]
-        failed = [f"{name} isn't running:" + "".join(f"\n    {line}" for line in _tail(out_dir / f"{name}.out") or ["(no output)"])
-                  for name in RESTARTED if name not in up]
-        return stopped, started, failed
-
-    stopped = quit_all(set(RESTARTED))
-    running = {name: start_detached(name, out_dir / f"{name}.out") for name in RESTARTED}
-    time.sleep(STARTUP_GRACE)
-    started, failed = [], []
-    for name, proc in running.items():
-        if proc.poll() is None:
-            started.append(f"{name} (pid {proc.pid})")
-        else:
-            tail = (out_dir / f"{name}.out").read_text(encoding="utf-8", errors="replace").strip().splitlines()[-5:]
-            failed.append(f"{name} exited with {proc.returncode}:" + "".join(f"\n    {line}" for line in tail or ["(no output)"]))
+    else:
+        start_detached("serve", out_dir / "serve.out")
+    # The task, pythonw and the launchers take a few seconds to reach the children.
+    wanted = ("serve", *RESTARTED)
+    deadline = time.monotonic() + SERVICE_GRACE
+    while len(up := _running(wanted)) < len(wanted) and time.monotonic() < deadline:
+        time.sleep(1)
+    started = []
+    if "serve" in up:
+        kids = [f"{name} (pid {up[name]})" for name in RESTARTED if name in up]
+        started.append(f"serve (pid {up['serve']})" + (" with " + ", ".join(kids) if kids else ""))
+    failed = [f"{name} isn't running:" + "".join(f"\n    {line}" for line in _tail(out_dir / f"{name}.out") or ["(no output)"])
+              for name in wanted if name not in up]
     return stopped, started, failed

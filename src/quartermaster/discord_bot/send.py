@@ -15,6 +15,7 @@ import asyncio
 import discord
 
 from ..config import Settings
+from . import held
 from .bot import split_message
 
 
@@ -35,3 +36,15 @@ def send_dm(settings: Settings, text: str) -> None:
     if not text:
         return
     asyncio.run(_send(settings, text))
+
+
+def send_or_hold(settings: Settings, text: str, what: str) -> bool:
+    """A job's DM: sent now by day, held for the bot to deliver at
+    ``digest.hour`` by night (see ``held``). True if it was held."""
+    if not text:
+        return False
+    if held.quiet(settings):
+        held.hold(settings, text, what)
+        return True
+    send_dm(settings, text)
+    return False
