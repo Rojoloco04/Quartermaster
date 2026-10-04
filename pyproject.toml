@@ -11,6 +11,7 @@ dependencies = [
     "pydantic-settings>=2.3",
     "python-dotenv>=1.0",
     "platformdirs>=4.2",
+    "pypdf>=5",  # resume: reading the built PDF back
 ]
 
 [project.optional-dependencies]

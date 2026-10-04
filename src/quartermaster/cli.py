@@ -477,6 +477,41 @@ def cmd_satisfactory(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_resume(args: argparse.Namespace) -> int:
+    from .resume import build, publish
+
+    settings = load_settings()
+    try:
+        if args.action == "setup":
+            print(build.setup())
+        elif args.action == "build":
+            r = publish.repo(settings)
+            from .resume import tex
+
+            built = build.build(tex.parse(r.tex.read_text(encoding="utf-8")), r.tex_dir)
+            out = Path(args.out) if args.out else settings.workspace("resume") / "resume.pdf"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_bytes(built.pdf)
+            print(f"Built {out} ({built.pages} page; every bullet reads back from the PDF). Nothing published.")
+        elif args.action == "preview":
+            print(publish.preview(settings, open_files=args.open))
+        elif args.action == "publish":
+            reviewed = {i.strip() for i in (args.reviewed or "").split(",") if i.strip()}
+            print(publish.publish(settings, reviewed=reviewed, review_all=args.reviewed == "all",
+                                  message=args.message or "", push=not args.no_push))
+        else:
+            problems = publish.check(settings)
+            if not problems:
+                print("In sync: the PDF and the site say what resume.tex says.")
+                return 0
+            print("\n".join(f"- {p}" for p in problems))
+            return 1
+    except RuntimeError as exc:
+        print(exc)
+        return 1
+    return 0
+
+
 def cmd_quit(args: argparse.Namespace) -> int:
     from .ops import procs
 
@@ -486,15 +521,44 @@ def cmd_quit(args: argparse.Namespace) -> int:
 
 
 def cmd_restart(args: argparse.Namespace) -> int:
+    from .chat import lock_path
     from .ops import procs
 
-    out_dir = load_settings().log_path.parent
-    stopped, started, failed = procs.restart(out_dir)
-    print("Stopped: " + (", ".join(stopped) or "nothing was running"))
+    settings = load_settings()
+    out_dir = settings.log_path.parent
+    report: list[str] = []
+    if args.wait_for_turn and not procs.wait_for_turn(lock_path(settings)):
+        report.append("An owner turn was still running after 5 minutes; restarted anyway.")
+    needs_install = False
+    if args.pull:
+        try:
+            pulled, needs_install = procs.pull_code(REPO_ROOT)
+            report.append(pulled)
+        except RuntimeError as exc:
+            report.append(f"Not updated, restarting the current code: {exc}")
+
+    def install() -> None:
+        try:
+            procs.reinstall(REPO_ROOT)
+            report.append("Dependencies changed: reinstalled the package.")
+        except (RuntimeError, subprocess.TimeoutExpired) as exc:
+            report.append(f"FAILED: {exc}")
+
+    stopped, started, failed = procs.restart(out_dir, before_start=install if needs_install else None)
+    report.append("Stopped: " + (", ".join(stopped) or "nothing was running"))
     if started:
-        print("Started: " + ", ".join(started) + f"  (console output in {out_dir})")
-    for line in failed:
-        print("FAILED: " + line)
+        report.append("Started: " + ", ".join(started) + f"  (console output in {out_dir})")
+    report += ["FAILED: " + line for line in failed]
+    text = "\n".join(report)
+    print(text)
+    log.info("restart: %s", text.replace("\n", " | "))
+    if args.dm:
+        from .discord_bot import send
+
+        try:
+            send.send_dm(settings, ("Restarted." if not failed else "Restart had problems.") + f"\n```\n{text}\n```")
+        except Exception:  # noqa: BLE001 - the restart happened; only the report is lost
+            log.exception("couldn't DM the restart report")
     return 1 if failed else 0
 
 
@@ -693,12 +757,26 @@ def main(argv: list[str] | None = None) -> int:
     p_sf.add_argument("archive", nargs="?", help="import: a .zip or .tar.gz of an old server's saves and blueprints")
     p_sf.set_defaults(func=cmd_satisfactory)
 
+    p_resume = sub.add_parser("resume", help="the resume: check it, build the PDF, publish PDF + site from resume.tex")
+    p_resume.add_argument("action", nargs="?", default="check", choices=["check", "setup", "build", "preview", "publish"])
+    p_resume.add_argument("--reviewed", metavar="IDS",
+                          help="publish: entries whose site text you've re-checked (comma-separated, or 'all')")
+    p_resume.add_argument("-m", "--message", help="publish: the commit message (default: what changed)")
+    p_resume.add_argument("--no-push", action="store_true", help="publish: commit but don't push")
+    p_resume.add_argument("--out", help="build: where to write the PDF (default: a scratch folder)")
+    p_resume.add_argument("--open", action="store_true", help="preview: open the PDF and the page afterwards")
+    p_resume.set_defaults(func=cmd_resume)
+
     sub.add_parser("quit", aliases=["stop"], help="stop every running Quartermaster process (bot, web, jobs)").set_defaults(
         func=cmd_quit
     )
-    sub.add_parser("restart", help="restart serve with its bot and dashboard, in the background").set_defaults(
-        func=cmd_restart
-    )
+    p_restart = sub.add_parser("restart", help="restart serve with its bot and dashboard, in the background")
+    p_restart.add_argument("--pull", action="store_true",
+                           help="first fast-forward the code to its remote (reinstalls if dependencies changed)")
+    p_restart.add_argument("--wait-for-turn", action="store_true",
+                           help="first wait (up to 5 min) for a running owner turn to finish")
+    p_restart.add_argument("--dm", action="store_true", help="DM the owner what happened")
+    p_restart.set_defaults(func=cmd_restart)
 
     p_queue = sub.add_parser("queue", help="list (or add to) the dev queue of code changes")
     p_queue.add_argument("text", nargs="*", help="what to change; omit to list the queue")

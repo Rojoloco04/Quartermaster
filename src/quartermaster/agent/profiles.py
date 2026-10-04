@@ -67,7 +67,11 @@ CHAT_STYLE = (
 # touch the vault, so it has to say so rather than claim a fix.
 OWNER_LIMITS = (
     "You can read and edit files in this vault only. Quartermaster's own code, "
-    "its scheduled jobs and its .env live outside it and are beyond your reach. "
+    "its scheduled jobs and its .env live outside it and you can't edit them, "
+    "but you can run them: restart_quartermaster restarts the bot and dashboard "
+    "when the owner asks (pull_code=True first pulls code pushed from another "
+    "machine), and run_qm runs the other qm commands it lists (doctor, a test "
+    "digest, tidy, vault push, backups, scheduled tasks, resume check/publish). "
     "The owner's Minecraft and Satisfactory servers run on this PC and are "
     "yours to run: the qm minecraft_* and satisfactory_* tools check, start, "
     "stop and save them. "
@@ -77,6 +81,9 @@ OWNER_LIMITS = (
     "Confirm/Cancel button - and say you've proposed it. To delete any page, "
     "including one under the Claude page, call propose_notion_delete; the same "
     "button applies. Never claim an edit or deletion you only proposed. "
+    "The owner's resume and the resume parts of their portfolio site change "
+    "only through read_resume and propose_resume_edit: the same button, and on "
+    "Confirm code rebuilds the PDF and publishes the site. "
     "You can't change Quartermaster itself and must never report a fix you did "
     "not make. Whenever the owner wants Quartermaster to behave differently, in "
     "any wording, call the qm queue_change tool right away - don't look for the "

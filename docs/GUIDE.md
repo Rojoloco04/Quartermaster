@@ -37,6 +37,17 @@ Minecraft and Satisfactory run on this PC; friends join over Tailscale. DM
 "start minecraft", "who's on?", "stop satisfactory", or use the **Servers** page.
 Both are backed up to F: every night.
 
+## Your resume
+
+`resume/resume.tex` in the portfolio repo is the resume: the PDF and the
+site's experience, education, projects and skills are generated from it.
+DM "add a bullet about X to my current job" and you get a preview with
+Confirm/Cancel; Confirm rebuilds the PDF, updates the site and pushes it. Or
+ask in Claude Code (or edit the file yourself): `qm resume preview --open` shows
+the PDF and the page without committing, `qm resume publish` puts it live. What the site adds beyond
+the resume (logos, blurbs, tags, skill levels) is in `resume/site.toml`.
+`qm resume` alone checks that everything is in sync.
+
 ## Settings and status
 
 `qm web` (http://127.0.0.1:8766) shows whether everything is running, the log,
@@ -45,5 +56,10 @@ preference and note is editable. Pages update themselves every 15 seconds; long
 text shows its start with a "more" toggle.
 
 - `qm restart` / `qm quit` restarts or stops the bot and dashboard.
+- From a DM: "restart" ("pull and restart" first pulls code pushed from
+  another machine, so you can develop anywhere and put it live from your
+  phone), and "run doctor", "send a test digest", "push the vault", "back up
+  the servers", "schedule status", "publish my resume" and the like.
+  Setup, auth and `quit` stay terminal-only.
 - `qm doctor` checks the setup when something's off.
 - `qm help` lists every command.

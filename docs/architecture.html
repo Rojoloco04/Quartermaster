@@ -143,7 +143,7 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
       <div class="box model"><b>Claude CLI (claude.exe)</b><span>one subprocess per turn, via the Agent SDK</span></div>
       <div class="box model"><b>MCP: google</b><span>Calendar read/write, Gmail read-only</span></div>
       <div class="box model"><b>MCP: microsoft, spotify</b><span>To Do; listening history</span></div>
-      <div class="box model"><b>MCP: qm</b><span>Claude page, Notion proposals, sync, reconcile, dev queue, lessons, tone, Minecraft, Satisfactory</span></div>
+      <div class="box model"><b>MCP: qm</b><span>Claude page, Notion proposals, sync, reconcile, dev queue, lessons, tone, Minecraft, Satisfactory, resume proposals</span></div>
     </div>
     <div class="lane store">
       <h4>Where things live</h4>
@@ -266,8 +266,9 @@ footer { margin-top:48px; color:var(--muted); font-size:13px }
     <div class="mod"><code>digest/</code><span>collectors → the digest's JSON → rendered message; the model only picks events</span></div>
     <div class="mod"><code>discord_bot/</code><span>the bot, moderation plans and execution, Minecraft from a channel, one-shot DMs and the ones held overnight</span></div>
     <div class="mod"><code>web/</code><span><code>qm web</code>: app, page views, the brain graph</span></div>
+    <div class="mod"><code>resume/</code><span>resume.tex parsed in code; builds the PDF (Tectonic), generates the site sections, publishes both in one commit</span></div>
     <div class="mod"><code>games/</code><span>Minecraft and Satisfactory servers, and the registry /servers lists</span></div>
-    <div class="mod"><code>ops/</code><span>supervisor and locks, Task Scheduler, vault push, game backups, dev queue</span></div>
+    <div class="mod"><code>ops/</code><span>supervisor and locks, restart (also from a DM, optionally pulling new code), Task Scheduler, vault push, game backups, dev queue</span></div>
     <div class="mod"><code>integrations/</code><span>google, microsoft, spotify, notion, claude_page, ticketmaster, lastfm, prices</span></div>
     <div class="mod"><code>mcp_servers/</code><span>MCP servers over stdio (<code>qm mcp &lt;name&gt;</code>)</span></div>
   </div>

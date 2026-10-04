@@ -107,6 +107,12 @@ DEFAULTS: dict = {
         # dir. Saves stay in %LOCALAPPDATA%\FactoryGame (the game decides).
         "dir": "",
     },
+    "resume": {
+        # The portfolio repo's folder: resume/resume.tex there is the source of
+        # truth for the resume PDF and the site's resume sections (qm resume).
+        # Blank turns the resume tools off.
+        "repo": "",
+    },
     "backups": {
         # Nightly zips of the game servers' worlds and saves (qm backup). The
         # live installs stay on the SSD; this is the HDD.

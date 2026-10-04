@@ -13,7 +13,10 @@ keeps crashing). Task Scheduler only starts a process, it doesn't keep one
 alive, so something has to. The ``Quartermaster Service`` logon task starts
 it windowless (pythonw). ``qm restart`` stops that tree (a scheduled job
 mid-run is left alone) and starts it again: through the logon task when
-registered, else detached from the terminal. ``qm bot`` / ``qm web`` by hand
+registered, else detached from the terminal; with ``--pull`` it fast-forwards
+the code first. From a DM, ``restart_later`` starts that restart through WMI,
+outside the bot's process tree it is about to kill, and it waits for the
+owner's turn to end before stopping anything. ``qm bot`` / ``qm web`` by hand
 are for debugging in the foreground; each holds an OS lock for its whole run,
 so a second copy refuses to start however it was launched: two connected
 bots double-reply.
@@ -242,14 +245,18 @@ def _running(names: tuple[str, ...]) -> dict[str, int]:
             if not (p["ppid"] in by_pid and command(by_pid[p["ppid"]]) == command(p))}
 
 
-def restart(out_dir: Path) -> tuple[list[str], list[str], list[str]]:
+def restart(out_dir: Path, before_start: Callable[[], None] | None = None) -> tuple[list[str], list[str], list[str]]:
     """Stop serve with its bot and dashboard (and a stray hand-started bot or
     web), then start serve again. Returns (stopped, started, failed); a failed
     entry carries the tail of its output file. Through the logon task when it
-    is registered, else ``qm serve`` detached from this terminal."""
+    is registered, else ``qm serve`` detached from this terminal.
+    ``before_start`` runs while nothing is up (reinstalling the package
+    rewrites qm.exe, which a running copy holds open)."""
     from . import schedule
 
     stopped = quit_all({"serve", *RESTARTED})
+    if before_start is not None:
+        before_start()
     if schedule.service_installed():
         schedule.run_service()
     else:
@@ -266,3 +273,69 @@ def restart(out_dir: Path) -> tuple[list[str], list[str], list[str]]:
     failed = [f"{name} isn't running:" + "".join(f"\n    {line}" for line in _tail(out_dir / f"{name}.out") or ["(no output)"])
               for name in wanted if name not in up]
     return stopped, started, failed
+
+
+# Unattended: a credential prompt would hang forever, so fail instead.
+_NO_PROMPT = {"GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+
+
+def _git(repo: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True,
+                          encoding="utf-8", timeout=120, env={**os.environ, **_NO_PROMPT})
+
+
+def pull_code(repo: Path) -> tuple[str, bool]:
+    """Fast-forward this repo to its remote: how a change made on another
+    machine reaches this one. Returns (what happened, whether pyproject.toml
+    changed, i.e. the package needs reinstalling). Never merges or forces; a
+    diverged or dirty checkout is refused by git and raised for a person."""
+    before = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    result = _git(repo, "pull", "--ff-only", "-q")
+    if result.returncode != 0:
+        raise RuntimeError(f"git pull failed: {(result.stderr or result.stdout).strip()[:400]}")
+    after = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    if before == after:
+        return f"Code already up to date ({after[:7]}).", False
+    log_lines = _git(repo, "log", "--format=%h %s", f"{before}..{after}").stdout.strip().splitlines()
+    changed = _git(repo, "diff", "--name-only", before, after).stdout.split()
+    listing = "".join(f"\n    {line}" for line in log_lines[:10])
+    more = f"\n    ... and {len(log_lines) - 10} more" if len(log_lines) > 10 else ""
+    return f"Pulled {len(log_lines)} commit(s), {before[:7]}..{after[:7]}:{listing}{more}", "pyproject.toml" in changed
+
+
+def reinstall(repo: Path) -> None:
+    """``pip install -e`` the repo into this venv, for a pull that changed
+    dependencies (code changes need nothing: the install is editable)."""
+    python = Path(sys.executable).with_name("python.exe")
+    result = subprocess.run([str(python), "-m", "pip", "install", "-q", "-e", str(repo)],
+                            capture_output=True, text=True, timeout=600)
+    if result.returncode != 0:
+        raise RuntimeError(f"pip install failed: {(result.stderr or result.stdout).strip()[-400:]}")
+
+
+def wait_for_turn(lock_file: Path, timeout: float = 300, poll: float = 2.0) -> bool:
+    """Block until no owner turn holds ``lock_file`` (True), or ``timeout``
+    passes (False). A restart asked for in a DM runs while that turn is still
+    replying; stopping the bot then would cut the reply off."""
+    from ..chat import TurnLock
+
+    deadline = time.monotonic() + timeout
+    while True:
+        lock = TurnLock(lock_file)
+        if lock.acquire():
+            lock.release()
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(poll)
+
+
+def restart_later(out_dir: Path, pull: bool) -> int:
+    """Start ``qm restart --wait-for-turn --dm`` (and ``--pull``) outside every
+    job of ours, and return its pid. Run in-process, a restart from a DM would
+    be the bot's own grandchild: ``quit_all`` spares its ancestors, and
+    killing them would kill it. Through WMI it outlives the bot it stops."""
+    python = Path(sys.executable).with_name("python.exe")
+    args = [str(python), "-m", "quartermaster.cli", "restart", "--wait-for-turn", "--dm"] + (["--pull"] if pull else [])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return launch_outside_jobs(f'cmd.exe /d /c "{subprocess.list2cmdline(args)} > restart.out 2>&1"', out_dir)

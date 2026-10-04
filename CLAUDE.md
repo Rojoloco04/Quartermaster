@@ -32,6 +32,12 @@ roadmap. The vault's system folder is `System/`.
   a DM (`satisfactory_*` tools) and no friend has joined over Tailscale. It
   runs until stopped: `qm quit` leaves it up, and it's using RAM beside the
   owner's own game.
+- The resume tool's DM path (`read_resume`, `propose_resume_edit`, the
+  Confirm that publishes) ran end to end on 2026-10-03 against a scratch
+  clone of the portfolio (propose built, preview, apply committed and pushed
+  to a local remote), but not yet from a real DM.
+- Restart from a DM (`restart_quartermaster`, with and without `pull_code`)
+  and `run_qm` haven't run from a real DM yet.
 
 **Lessons** (`agent/lessons.py`): the owner agent calls the `qm` server's
 `record_lesson` when corrected; a dated line lands in `facts/lessons.md`, and
@@ -167,11 +173,17 @@ src/quartermaster/
 │   ├── layout.py        page shell, nav, CSS, escaping, markdown
 │   ├── dashboard_view.py, chat_view.py, settings_view.py (+ the only file writes), servers_view.py
 │   └── brain.py         the /brain graph of the vault
+├── resume/              the resume (see "The resume"): resume.tex read in code
+│   ├── tex.py           the macro vocabulary parsed, inline TeX to text/HTML, entry diffs
+│   ├── site.py          site.toml extras, the generated index.html regions, review hashes
+│   ├── build.py         Tectonic (pinned, downloaded by qm resume setup), one page, text check
+│   ├── publish.py       qm resume check/publish: PDF + site + source in one commit, pushed
+│   └── proposals.py     DM edits: read_resume, propose_resume_edit, applied on Confirm
 ├── games/               game servers; __init__ is the registry (GAMES) the /servers page lists
 │   ├── minecraft.py     Paper over RCON
 │   └── satisfactory.py  SteamCMD + HTTPS API
 ├── ops/                 keeping it running
-│   ├── procs.py         qm quit/restart, the qm serve supervisor, one-instance locks
+│   ├── procs.py         qm quit/restart (+ pull, + from a DM), the qm serve supervisor, one-instance locks
 │   ├── schedule.py      Windows Task Scheduler wiring (schtasks.exe)
 │   ├── vault_push.py    daily: commit the whole vault and push it (its only backup); never forces
 │   ├── game_backup.py   daily: zip each game server's world/saves to the backup drive (F:)
@@ -368,6 +380,38 @@ throttled to respect Discord's edit rate limit.
 The owner agent can only edit the vault. `OWNER_LIMITS` tells it to say so when
 asked to fix Quartermaster itself — it once reported a fix it couldn't make.
 
+## The CLI from a DM
+
+So the owner can develop on any machine and put it live from Discord, the `qm`
+server exposes the CLI within reason:
+
+- **`restart_quartermaster(pull_code)`** is `qm restart`. Run inside the turn
+  it couldn't work: the MCP server is the bot's grandchild, `quit_all` spares
+  its own ancestors, and killing them would kill it. So `procs.restart_later`
+  starts `python -m quartermaster.cli restart --wait-for-turn --dm [--pull]`
+  through WMI (`launch_outside_jobs`, output to `restart.out` beside the log).
+  That waits (up to 5 min) for `System/turn.lock` to free, so the reply that
+  announced the restart isn't cut off, then stops serve's tree and starts it
+  again, then DMs what was stopped and started. `--pull` is `git pull
+  --ff-only` of this repo first (never merges or forces; a refused pull still
+  restarts the current code and says why); if `pyproject.toml` changed it
+  `pip install -e`s while nothing runs (a running qm.exe holds the file the
+  install rewrites). Code changes need no install: it's editable.
+- **`run_qm(command)`** runs `qm <command>` as a subprocess, but only the exact
+  strings in `qm.QM_COMMANDS`: doctor, `digest --test` (started through WMI,
+  since it outlasts a turn; it DMs itself), `digest --reset`, `tidy
+  [--dry-run]`, `push`, `backup`, `schedule status`, `schedule install
+  --digest-cadence daily|weekly`, `resume` and `resume publish` (still refuses
+  while site text needs review). 180s timeout; stdout returned, the log tail on
+  failure.
+- **Terminal-only on purpose:** `auth` (a browser), `init`, game `setup`,
+  `import` and `minecraft op` (what's installed, who's trusted), `quit` (no way
+  back from a DM), `bot`/`web`/`serve`/`mcp` (internal). Sync, reconcile, the
+  games and the queue have their own tools.
+- The owner agent reads email, so an injected instruction could at worst
+  restart the bot, pull the owner's own pushed code, or run a listed command.
+  `OWNER_LIMITS` says owner requests only.
+
 ## Dev queue
 
 The vault's `System/dev-queue.md`. The owner asks for a change in plain words
@@ -492,6 +536,68 @@ server's `satisfactory_status/start/stop/save`, a /servers tab. Deliberate:
   hosting-panel backup (zip holding a tarball) loaded the newest save, `save`,
   `stop` (saved, exited in 8s), start autoloaded the session, the /servers tab,
   and it outlived `qm restart`. Not yet: a DM, or a friend joining over Tailscale.
+
+## The resume (`resume/`)
+
+The owner's resume used to be a Google Doc, with the portfolio site
+(`resume.repo` in config.toml, the owner's public GitHub Pages repo) matched to
+it by hand. Now `resume/resume.tex` in that repo is the one source of truth;
+the Google Doc is retired. The repo is the only cloud copy (no Overleaf: its
+git sync is a paid feature, and a second editable copy would be a second
+source). The phone number on the public PDF is the owner's choice.
+
+- **resume.tex is a fixed vocabulary** (`\header`, `\section`, `\school`,
+  `\job`, `\project`, `\role`, `\skills`, `bullets`; layout in `resume.cls`
+  beside it), parsed in code by `tex.py`. Anything else in the body, or an
+  unknown inline command, is an error with a line number: a silently dropped
+  bullet is the exact desync this exists to prevent. Every entry has an id.
+- **The site may show less or more, never different words.** `site.py`
+  writes only the regions between `<!-- resume:<name> -->` markers in
+  `index.html` (projects, experience, education, skills); the rest of the page
+  is hand-made. Resume facts come from resume.tex; what the site adds (logos,
+  links, blurbs, tags, activities, skill levels) is in `resume/site.toml`,
+  keyed by id, quoting resume fields as `{placeholders}`. A site-only project
+  is `site_only = true`. A resume project or role with no place on the site,
+  extras for an id the resume lost, or a skill without a level is an error,
+  not a silent omission. A role is shown as an activity line (`{ role = "id" }`)
+  without its bullets: the owner had the IEEE detail removed from the site.
+- **Site text is re-reviewed when its entry changes.** An entry with its own
+  words in site.toml (`site.CLAIM_KEYS`) is stale when the hash of what the
+  resume says about it differs from `resume/reviewed.json` (written by code).
+  Publishing refuses while any is stale, listing the site text, until
+  `--reviewed <ids>`/`all`; in the DM flow the preview shows that text and
+  Confirm is the review.
+- **The PDF** is built by Tectonic 0.17.0 (`qm resume setup`: pinned URL and
+  sha256, into the per-user data dir; its TeX bundle is fetched once). A build
+  passes only at one page with every field and bullet found, in order, in the
+  PDF's extracted text (`build.missing_text`, whitespace and quote style
+  ignored). Deliberate in `resume.cls`: TeX Gyre Termes loaded by file name
+  (Tectonic on Windows has no fontconfig); `\XeTeXinterwordspaceshaping=2` so
+  spaces reach the PDF as characters (without it pypdf ran italic words
+  together; poppler coped); no hyphenation; `\raggedright`, because ragged2e
+  with that shaping crashes Tectonic (access violation); left/right lines as
+  two natural-width boxes, because a bare `\hfill` line stretched its spaces
+  under the shaping instead.
+- **Publish** (`qm resume publish`): fast-forward to the remote, parse,
+  render, build, write the PDF (byte-identical for the same source:
+  builds stamp a fixed `SOURCE_DATE_EPOCH`), `index.html` (line endings kept) and `reviewed.json`, then commit only its own paths in one
+  commit and push. Same git rules as the vault push: no force, no hook skips,
+  no prompts, refuses a detached HEAD or a merge in progress. `qm resume`
+  (check) reports any drift without building. `qm resume preview [--open]`
+  writes the PDF and `index.html` in place without committing, listing
+  unreviewed site text instead of refusing: the owner iterates on the resume in
+  Claude Code (edit, preview, repeat), not over Discord, and publishes once happy.
+- **From a DM**: the owner agent can't read the portfolio repo (it's outside
+  the vault), so `read_resume` returns resume.tex, site.toml and any drift,
+  and `propose_resume_edit` takes exact-text edits (each `old` must occur
+  once) to either file. It proves the result parses, renders and builds to one
+  page before storing a `pending_writes` row (`mode = 'resume'`, both files'
+  old and new text). The bot offers it like a Notion proposal; the preview is
+  an entry diff and the site text to re-check, built in code. Confirm runs in
+  a thread (a build and a push take a while): it refuses if the portfolio has
+  uncommitted changes in its paths or the files changed since the proposal,
+  writes, publishes with `review_all`, and puts the files back if anything
+  fails. The gate matters more than for Notion: this publishes a public site.
 
 ## Game server backups (`ops/game_backup.py`)
 

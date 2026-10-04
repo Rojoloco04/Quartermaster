@@ -190,7 +190,7 @@ class Quartermaster(discord.Client):
         self._approvals = asyncio.create_task(self._watch_approvals())
 
     async def _watch_approvals(self) -> None:
-        """DM the owner about Notion changes waiting on them.
+        """DM the owner about Notion and resume changes waiting on them.
 
         The gate is this button press. A proposal can come from anything the
         agent read; applying it cannot. Rows stay 'pending' until decided, so a
@@ -233,23 +233,37 @@ class Quartermaster(discord.Client):
             log.exception("delivering held DMs failed")
 
     async def _ask_approval(self, row) -> None:
-        from .. import db
         from ..knowledge import notion_writes
+        from ..resume import proposals
 
         owner = await self.fetch_user(self.settings.discord_owner_id)
         view = moderation.ConfirmView(self.settings.discord_owner_id, timeout=None)
-        summary = notion_writes.preview(row)
+        if row["mode"] == proposals.MODE:
+            summary = await asyncio.to_thread(proposals.preview, row, self.settings)
+        else:
+            summary = notion_writes.preview(row)
         message = await owner.send(summary, view=view)
         log.info("offered pending write %s (%s '%s') to the owner", row["id"], row["mode"], row["page_title"])
         await view.wait()
-        with db.session(self.settings.db_path) as conn:
-            if view.approved:
-                result = notion_writes.apply(self.settings, conn, row)
-            else:
-                notion_writes.decide(conn, row["id"], "declined")
-                result = "Cancelled. Nothing was written."
-                log.info("owner declined pending write %s", row["id"])
+        if view.approved:
+            await message.edit(content=f"{summary}\n\n⏳ Applying…", view=None)
+        # A resume change builds a PDF and pushes a repo: off the event loop.
+        result = await asyncio.to_thread(self._decide_write, row, view.approved)
         await message.edit(content=f"{summary}\n\n{result}", view=None)
+
+    def _decide_write(self, row, approved: bool) -> str:
+        from .. import db
+        from ..knowledge import notion_writes
+        from ..resume import proposals
+
+        with db.session(self.settings.db_path) as conn:
+            if not approved:
+                notion_writes.decide(conn, row["id"], "declined")
+                log.info("owner declined pending write %s", row["id"])
+                return "Cancelled. Nothing was written."
+            if row["mode"] == proposals.MODE:
+                return proposals.apply(self.settings, conn, row)
+            return notion_writes.apply(self.settings, conn, row)
 
     async def _beat(self) -> None:
         """Write {pid, at} every 30s so `qm web` can tell a running bot from a dead one."""

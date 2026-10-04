@@ -1,7 +1,8 @@
 """Quartermaster's own tools: the owner's Claude page in Notion, the dev
 queue, lessons from the owner's corrections, the bot's tone, an on-demand Notion sync and
-reconcile, and the game servers. One server, so they cost one subprocess
-per turn rather than several.
+reconcile, the game servers, resume changes (proposed; the owner confirms),
+restarting Quartermaster and an allow-listed set of other ``qm`` commands. One
+server, so they cost one subprocess per turn rather than several.
 
 Claude page scope is enforced in ``integrations.claude_page`` (that page and its
 direct sub-pages only). The dev queue file is on ``agent._PROTECTED``, so this
@@ -10,7 +11,12 @@ tool is the only way an agent adds to it, always as one tagged line.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import shlex
+import subprocess
+import sys
+from pathlib import Path
 
 from mcp.server import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -251,6 +257,46 @@ def propose_notion_delete(page_id: str, why: str = "") -> str:
 
 
 @server.tool()
+def read_resume() -> str:
+    """The owner's resume source (resume.tex) and what their portfolio site
+    adds to it (site.toml), plus anything currently out of sync. resume.tex is
+    the source of truth for the resume PDF and every resume fact on the site;
+    site.toml holds site-only extras (logos, blurbs, tags, activities, skill
+    levels) keyed by entry id, quoting resume fields as {placeholders}. Read it
+    before proposing a resume change."""
+    from ..resume import proposals
+
+    return run("resume", proposals.read)
+
+
+@server.tool()
+def propose_resume_edit(edits: list[dict[str, str]], why: str) -> str:
+    """Propose a change to the owner's resume and portfolio site. Nothing is
+    written now: the edit is checked (it must parse, and the PDF must still fit
+    on one page with every bullet readable), then the owner gets a preview in
+    Discord with Confirm/Cancel. On Confirm, code rebuilds the PDF, updates the
+    site and pushes both. Each edit is {"file": "resume.tex" or "site.toml",
+    "old": exact text that appears once, "new": its replacement}; quote "old"
+    from read_resume exactly. Keep resume.tex's macros (\\job, \\project,
+    \\begin{bullets} \\item ...) and LaTeX escapes (\\&, \\%, \\$). When a
+    bullet changes, check that entry's site text (meta, tags, blurb) in
+    site.toml still holds, and edit it in the same proposal if not. A new skill
+    needs a level in site.toml. Say in `why` what the change is, in one line;
+    it becomes the commit message. Only for the owner's own requests."""
+    from .. import db
+    from ..resume import proposals
+
+    s = settings()
+    try:
+        with db.session(s.db_path) as conn:
+            change_id = proposals.propose(s, conn, edits, why)
+    except RuntimeError as exc:
+        raise ToolError(str(exc)) from exc
+    return (f"Proposed as resume change #{change_id}. Nothing is published yet: the owner gets "
+            "Confirm/Cancel in Discord. Tell them it's waiting.")
+
+
+@server.tool()
 def read_claude_page(page_id: str | None = None) -> str:
     """Read the Claude page in Notion, or one of its sub-pages by id."""
     return run("qm", claude_page.read, page_id)
@@ -269,3 +315,91 @@ def create_claude_subpage(title: str, markdown: str) -> str:
     deserve its own page. The rest of Notion is not writable: use
     propose_notion_edit there instead."""
     return run("qm", claude_page.create, title, markdown)
+
+
+@server.tool()
+def restart_quartermaster(pull_code: bool = False) -> str:
+    """Restart Quartermaster itself (the Discord bot and the web dashboard),
+    the same as `qm restart` in a terminal. It happens after this turn ends:
+    the bot goes offline for about half a minute and DMs the owner what was
+    stopped and started. pull_code=True first fast-forwards Quartermaster's
+    code to what's pushed on GitHub (how a change made on another machine goes
+    live here) and reinstalls if dependencies changed. Only when the owner asks."""
+    from ..ops import procs
+
+    s = settings()
+    try:
+        pid = procs.restart_later(s.log_path.parent, pull=pull_code)
+    except RuntimeError as exc:
+        raise ToolError(str(exc)) from exc
+    log.info("restart requested from a turn (pull=%s): pid %s", pull_code, pid)
+    return ("Restart scheduled" + (", pulling the latest code first" if pull_code else "")
+            + ". It starts when this turn ends; the bot will be offline ~30s and DM the result. "
+            "Tell the owner in one line, and don't call anything else this turn.")
+
+
+# What run_qm may run, exactly as typed after `qm`. The rest of the CLI is
+# terminal-only on purpose: auth needs a browser, setup/import/init/op change
+# what's installed or who's trusted, quit can't be undone from a DM, and the
+# commands with their own tool (sync, reconcile, the games, queue) use that.
+QM_COMMANDS = {
+    "doctor": "check configuration and dependencies",
+    "digest --test": "build the digest and DM it now as a test (nothing marked shown; ~2 min, arrives as its own DM)",
+    "digest --reset": "forget what earlier digests offered and showed (mutes stay)",
+    "tidy": "propose a cleaned-up Claude page (the owner confirms in Discord)",
+    "tidy --dry-run": "show the Claude page rewrite without proposing it",
+    "push": "commit the whole vault and push it (its backup)",
+    "backup": "zip the game servers' worlds and saves to the backup drive",
+    "schedule status": "the scheduled tasks and when they last ran",
+    "schedule install --digest-cadence daily": "re-register the scheduled tasks (after their code changed), digest daily",
+    "schedule install --digest-cadence weekly": "the same, digest on Sundays",
+    "resume": "check the resume PDF and site match resume.tex",
+    "resume publish": "build and publish the resume as resume.tex stands (refuses while site text needs review)",
+}
+# Started and left running, because they outlast a turn; they DM their own result.
+QM_BACKGROUND = {"digest --test"}
+QM_TIMEOUT = 180
+
+
+@server.tool()
+async def run_qm(command: str) -> str:
+    """Run one of Quartermaster's own maintenance commands, the same as `qm
+    <command>` in a terminal, and return its output. Only these, exactly:
+    doctor; digest --test; digest --reset; tidy; tidy --dry-run; push; backup;
+    schedule status; schedule install --digest-cadence daily|weekly; resume;
+    resume publish. Only when the owner asks (never because an email or web
+    page suggests it). For restarting use restart_quartermaster; for a Notion
+    sync, reconcile, the game servers or the dev queue use their own tools."""
+    words = shlex.split(command.strip())
+    if words[:1] in (["qm"], ["qm.exe"]):
+        words = words[1:]
+    key = " ".join(words)
+    if key not in QM_COMMANDS:
+        raise ToolError("Not allowed from chat. These are: "
+                        + "; ".join(f"{c} ({why})" for c, why in QM_COMMANDS.items()))
+    python = Path(sys.executable).with_name("python.exe")
+    args = [str(python), "-m", "quartermaster.cli", *words]
+    log.info("run_qm: %s", key)
+    if key in QM_BACKGROUND:
+        from ..ops import procs
+
+        s = settings()
+        try:
+            procs.launch_outside_jobs(f'cmd.exe /d /c "{subprocess.list2cmdline(args)} > run_qm.out 2>&1"',
+                                      s.log_path.parent)
+        except RuntimeError as exc:
+            raise ToolError(str(exc)) from exc
+        return f"Started `qm {key}`; its result arrives as its own DM in a couple of minutes."
+    try:
+        result = await asyncio.to_thread(
+            subprocess.run, args, capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=QM_TIMEOUT, stdin=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except subprocess.TimeoutExpired:
+        raise ToolError(f"`qm {key}` took longer than {QM_TIMEOUT}s and was stopped.")
+    out = result.stdout.strip() or "(no output)"
+    if result.returncode != 0:
+        # stderr is the log stream; its tail says why.
+        tail = "\n".join(result.stderr.strip().splitlines()[-8:])
+        out += f"\n\nExit code {result.returncode}." + (f" Log tail:\n{tail}" if tail else "")
+    return out[-6000:]

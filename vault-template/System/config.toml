@@ -66,3 +66,6 @@ dir = ""                  # blank: %LOCALAPPDATA%\quartermaster\minecraft
 [backups]
 dir = 'F:\Backups\servers'  # nightly zips of the game servers (qm backup); the live installs stay put
 keep = 14                   # zips kept per game; a night where nothing changed writes none
+
+[resume]
+repo = ""                   # the portfolio repo; its resume/resume.tex is the source of truth (qm resume)
