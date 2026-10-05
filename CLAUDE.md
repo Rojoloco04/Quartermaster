@@ -571,8 +571,10 @@ source). The phone number on the public PDF is the owner's choice.
   sha256, into the per-user data dir; its TeX bundle is fetched once). A build
   passes only at one page with every field and bullet found, in order, in the
   PDF's extracted text (`build.missing_text`, whitespace and quote style
-  ignored). Deliberate in `resume.cls`: TeX Gyre Termes loaded by file name
-  (Tectonic on Windows has no fontconfig); `\XeTeXinterwordspaceshaping=2` so
+  ignored). Deliberate in `resume.cls`: Cabin loaded by file name
+  (Tectonic on Windows has no fontconfig) at a round `Scale` with `\linespread`
+  matched to it (Lato and Source Sans failed the text check: their dates and
+  bullets came out wrong); `\XeTeXinterwordspaceshaping=2` so
   spaces reach the PDF as characters (without it pypdf ran italic words
   together; poppler coped); no hyphenation; `\raggedright`, because ragged2e
   with that shaping crashes Tectonic (access violation); left/right lines as
