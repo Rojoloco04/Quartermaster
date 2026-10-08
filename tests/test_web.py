@@ -16,7 +16,7 @@ LOG = """\
 2026-09-22 08:32:58,942 INFO quartermaster.agent: [aaaa1111] tool call: Glob({'pattern': 'x'})
 2026-09-22 08:33:17,474 INFO quartermaster.agent: [aaaa1111] tool call: mcp__google__list_events({})
 2026-09-22 08:36:19,838 INFO quartermaster.agent: [aaaa1111] turn done: ok=True cost=$0.0412 session=s1
-2026-09-22 09:00:00,000 INFO quartermaster.agent: [bbbb2222] owner turn start (model=claude-haiku-4-5): count to 400
+2026-09-22 09:00:00,000 INFO quartermaster.agent: [bbbb2222] owner turn start (model=claude-haiku-5-5): count to 400
 2026-09-22 09:00:06,000 INFO quartermaster.agent: [bbbb2222] cancelled (profile=owner)
 2026-09-22 09:01:00,000 INFO quartermaster.agent: [cccc3333] owner turn start (model=claude-opus-5): still going
 """

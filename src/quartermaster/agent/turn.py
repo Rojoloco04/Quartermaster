@@ -56,11 +56,11 @@ class Reply:
 
 # Model IDs, not aliases ("sonnet", "opus", ...) - deterministic regardless
 # of what an alias currently resolves to for this CLI install.
-HAIKU = "claude-haiku-4-5"
+HAIKU = "claude-haiku-5-5"
 SONNET = "claude-sonnet-5-5"
 OPUS = "claude-opus-5-5"
 
-# Thinking depth for every Sonnet/Opus turn. Chat, a digest and a reconcile
+# Thinking depth for every turn. Chat, a digest and a reconcile
 # are not hard reasoning; "opus:" is there when one is.
 EFFORT = "medium"
 
@@ -155,8 +155,8 @@ def _options(profile: Profile, prompt: str = "", cli_path: str | None = None) ->
         hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[_guard(profile)])]},
         continue_conversation=profile.share_session,
         max_turns=profile.max_turns,
-        # Explicit, so no settings file can raise it. Haiku doesn't take one.
-        **({"effort": EFFORT} if model != HAIKU else {}),
+        # Explicit, so no settings file can raise it.
+        effort=EFFORT,
         **(
             {"output_format": {"type": "json_schema", "schema": profile.output_schema}}
             if profile.output_schema

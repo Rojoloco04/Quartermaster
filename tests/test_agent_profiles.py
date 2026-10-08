@@ -134,10 +134,10 @@ class TestModelRouting:
                        "help me think through this architecture decision", "word " * 400):
             assert pick_model(prompt, profile) == SONNET
 
-    def test_effort_is_explicit_and_never_sent_to_haiku(self, settings):
+    def test_effort_is_explicit_for_every_model(self, settings):
         profile = owner_profile(settings)
         assert _options(profile, "hello").effort == agent.EFFORT
-        assert _options(profile, "haiku: hello").effort is None
+        assert _options(profile, "haiku: hello").effort == agent.EFFORT
 
     def test_user_settings_are_not_loaded(self, settings):
         # ~/.claude is the owner's coding setup: skills, plugins, rules, xhigh effort.

@@ -820,7 +820,7 @@ outside both repos.
 - **The SDK never times out.** `Profile.timeout_seconds` wraps each turn in
   `asyncio.wait_for`; check it first if a surface hangs.
 - **Model choice is fixed per profile** (`agent.pick_model`): parser/public →
-  Haiku, everything else → Sonnet at `EFFORT="medium"` (Haiku gets no effort).
+  Haiku 5.5, everything else → Sonnet, all at `EFFORT="medium"`.
   Prefix `opus:`/`sonnet:`/`haiku:` to force one turn. The owner was once routed
   per message; each model has its own prompt cache, so a switch re-sent the whole
   conversation uncached. `_FALLBACK` steps one tier toward Sonnet on a 529.
